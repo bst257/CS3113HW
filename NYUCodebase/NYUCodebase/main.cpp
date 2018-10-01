@@ -86,6 +86,7 @@ int main(int argc, char *argv[])
 		lastFrameTicks = ticks;
 
 		if (scaleRatio > 1.25f || scaleRatio < 1.0f) {
+			scaleRatio = (scaleRatio > 1.25f ? 1.25f : 1.0f);
 			scaleDirection *= -1.0f;
 		}
 		scaleRatio += 0.5f * elapsed * scaleDirection;
