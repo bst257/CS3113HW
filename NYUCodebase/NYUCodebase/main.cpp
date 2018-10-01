@@ -84,12 +84,12 @@ int main(int argc, char *argv[])
 		float ticks = (float)SDL_GetTicks() / 1000.0f;
 		float elapsed = ticks - lastFrameTicks;
 		lastFrameTicks = ticks;
-
-		if (scaleRatio > 1.25f || scaleRatio < 1.0f) {
+	    
+		scaleRatio += 0.5f * elapsed * scaleDirection;
+	    	if (scaleRatio > 1.25f || scaleRatio < 1.0f) {
 			scaleRatio = (scaleRatio > 1.25f ? 1.25f : 1.0f);
 			scaleDirection *= -1.0f;
 		}
-		scaleRatio += 0.5f * elapsed * scaleDirection;
 
 		glUseProgram(program0.programID);
 		program0.SetProjectionMatrix(projectionMatrix);
