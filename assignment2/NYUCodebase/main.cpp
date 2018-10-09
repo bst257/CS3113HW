@@ -9,6 +9,7 @@
 #include "glm/gtc/matrix_transform.hpp"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#include <ctime>
 
 #ifdef _WINDOWS
 #define RESOURCE_FOLDER ""
@@ -18,7 +19,7 @@
 
 SDL_Window* displayWindow;
 
-GLuint LoadTexture(const char *filePath) {
+GLuint LoadTextureNearest(const char *filePath) {
 	int w, h, comp;
 	unsigned char* image = stbi_load(filePath, &w, &h, &comp, STBI_rgb_alpha);
 
@@ -39,6 +40,199 @@ GLuint LoadTexture(const char *filePath) {
 	return retTexture;
 }
 
+GLuint LoadTextureLinear(const char *filePath) {
+	int w, h, comp;
+	unsigned char* image = stbi_load(filePath, &w, &h, &comp, STBI_rgb_alpha);
+
+	if (image == NULL) {
+		std::cout << "Unable to load image. Make sure the path is correct\n";
+		assert(false);
+	}
+
+	GLuint retTexture;
+	glGenTextures(1, &retTexture);
+	glBindTexture(GL_TEXTURE_2D, retTexture);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	stbi_image_free(image);
+	return retTexture;
+}
+
+float frogScale = 1.0f;
+float frogXPosition = 0.0f;
+float frogYPosition = 0.0f;
+float frogXDirection = -1.0f;
+float frogYDirection = 1.0f;
+float playerPosition;
+float lastFrameTicks = 0.0f;
+glm::mat4 projectionMatrix = glm::mat4(1.0f);
+glm::mat4 modelMatrix = glm::mat4(1.0f);
+glm::mat4 viewMatrix = glm::mat4(1.0f);
+
+ShaderProgram program0, program1;
+
+float getFrogAngle() {
+	float angleMod = (float)(rand() % 30 + 1) / 100.0f;
+	return angleMod * 3.1415926f;
+}
+
+float frogAngle = getFrogAngle();
+
+void checkFrogCollision() {
+	float playerXPosition = -1.777f + 0.125f;
+	float playerYPosition = playerPosition;
+	float playerHeight = 0.5f;
+	float playerWidth = 0.25f;
+	float frogHeight = 0.5f * frogScale;
+	float frogWidth = 0.74f * frogScale;
+
+	float xDistance = std::abs(playerXPosition - frogXPosition) - ((playerHeight + frogHeight) / 2.0f);
+	float yDistance = std::abs(playerYPosition - frogYPosition) - ((playerWidth + frogWidth) / 2.0f);
+
+	if (yDistance < 0 && xDistance < 0) {
+		frogXDirection *= -1.0f;
+	}
+}
+
+void determinePolygonPositions(float elapsed) {
+	frogYPosition += frogYDirection * elapsed * std::sin(frogAngle) * 2.0f;
+	frogXPosition += frogXDirection * elapsed * std::cos(frogAngle) * 2.0f;
+	
+	if (frogYPosition > 1.0f - 0.1f - (0.25f * frogScale) || frogYPosition < -1.0f + 0.1f + (0.25f * frogScale)) {
+		frogYPosition = (frogYPosition > 1.0f - 0.1f - (0.25f * frogScale) ? 1.0f - 0.1f - (0.25f * frogScale) : -1.0f + 0.1f + (0.25f * frogScale));
+		frogYDirection *= -1.0f;
+	}
+
+	if (playerPosition > 0.65f || playerPosition < -0.65f) {
+		playerPosition = (playerPosition > 0.65f ? 0.65f : -0.65f);
+	}
+
+	checkFrogCollision();
+
+	//reset on win/lose
+	if (frogXPosition > 1.77f || frogXPosition < -1.77f) {
+		frogXPosition = 0.0f;
+		frogYPosition = 0.0f;
+		frogXDirection = -1.0f;
+		frogYDirection = 1.0f;
+		frogAngle = getFrogAngle();
+	}
+
+	frogScale = (-1.0f * (std::abs(frogXPosition) / 1.77f)) + 1.2f;
+}
+
+void drawTexturedPolygons() {
+	glUseProgram(program0.programID);
+	program0.SetProjectionMatrix(projectionMatrix);
+	program0.SetViewMatrix(viewMatrix);
+
+	//draw the frog
+	modelMatrix = glm::mat4(1.0f);
+	modelMatrix = glm::translate(modelMatrix, glm::vec3(frogXPosition, frogYPosition, 0.0f));
+	modelMatrix = glm::scale(modelMatrix, glm::vec3(frogScale, frogScale, 1.0f));
+
+	program0.SetModelMatrix(modelMatrix);
+
+	GLuint frogTexture = LoadTextureNearest(RESOURCE_FOLDER"frog.png");
+
+	float vertices0[] = { -0.37f, -0.25f, 0.37f, -0.25f, 0.37f, 0.25f, -0.37f, -0.25f, 0.37f, 0.25f, -0.37f, 0.25f };
+	glVertexAttribPointer(program0.positionAttribute, 2, GL_FLOAT, false, 0, vertices0);
+	glEnableVertexAttribArray(program0.positionAttribute);
+
+	float texCoords0[] = { 0.0f, 1.0f,  1.0f,  1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  1.0f,  0.0f, 0.0f, 0.0f };
+	glVertexAttribPointer(program0.texCoordAttribute, 2, GL_FLOAT, false, 0, texCoords0);
+	glEnableVertexAttribArray(program0.texCoordAttribute);
+
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glDisableVertexAttribArray(program0.positionAttribute);
+	glDisableVertexAttribArray(program0.texCoordAttribute);
+
+	//drawing left lilypad (player)
+	GLuint beeTexture = LoadTextureLinear(RESOURCE_FOLDER"lilypad.png");
+
+	modelMatrix = glm::mat4(1.0f);
+	modelMatrix = glm::translate(modelMatrix, glm::vec3(-1.77f, playerPosition, 0.0f));
+	program0.SetModelMatrix(modelMatrix);
+
+	float vertices1[] = { 0.0f, -0.25f, 0.25f, 0.25f, 0.0f, 0.25f, 0.0f, -0.25f, 0.25f, -0.25f, 0.25f, 0.25f };
+	glVertexAttribPointer(program0.positionAttribute, 2, GL_FLOAT, false, 0, vertices1);
+	glEnableVertexAttribArray(program0.positionAttribute);
+
+	float texCoords1[] = { 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f };
+	glVertexAttribPointer(program0.texCoordAttribute, 2, GL_FLOAT, false, 0, texCoords1);
+	glEnableVertexAttribArray(program0.texCoordAttribute);
+
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glDisableVertexAttribArray(program0.positionAttribute);
+	glDisableVertexAttribArray(program0.texCoordAttribute);
+
+	//drawing right lilypad (CPU)
+	GLuint ghostTexture = LoadTextureLinear(RESOURCE_FOLDER"lilypad.png");
+
+	modelMatrix = glm::mat4(1.0f);
+	modelMatrix = glm::translate(modelMatrix, glm::vec3(1.77f, 0.0f, 0.0f));
+	program0.SetModelMatrix(modelMatrix);
+
+	float vertices2[] = { -0.25f, -0.25f, -0.25f, 0.25f, 0.0f, 0.25f, -0.25f, -0.25f, 0.0f, -0.25f, 0.0f, 0.25f };
+	glVertexAttribPointer(program0.positionAttribute, 2, GL_FLOAT, false, 0, vertices2);
+	glEnableVertexAttribArray(program0.positionAttribute);
+
+	float texCoords2[] = { 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f };
+	glVertexAttribPointer(program0.texCoordAttribute, 2, GL_FLOAT, false, 0, texCoords2);
+	glEnableVertexAttribArray(program0.texCoordAttribute);
+
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glDisableVertexAttribArray(program0.positionAttribute);
+	glDisableVertexAttribArray(program0.texCoordAttribute);
+}
+
+void drawUntexturedPolygons() {
+	glUseProgram(program1.programID); //switching to untextured polygons
+	program1.SetProjectionMatrix(projectionMatrix);
+	program1.SetViewMatrix(viewMatrix);
+	program1.SetColor(0.08f, 0.49f, 0.2f, 1.0f); //seaweed
+
+	//Midpoint
+	modelMatrix = glm::mat4(1.0f);
+	program1.SetModelMatrix(modelMatrix);
+
+	float vertices3[] = { -0.025f, -1.0f, 0.025f, 1.0f, -0.025f, 1.0f, -0.025f, -1.0f, 0.025f, -1.0f, 0.025f, 1.0f };
+	glVertexAttribPointer(program1.positionAttribute, 2, GL_FLOAT, false, 0, vertices3);
+	glEnableVertexAttribArray(program1.positionAttribute);
+
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glDisableVertexAttribArray(program1.positionAttribute);
+
+	program1.SetColor(0.85f, 0.71f, 0.57f, 1.0f); //sandy
+
+	//Top Wall
+	modelMatrix = glm::mat4(1.0f);
+	modelMatrix = glm::translate(modelMatrix, glm::vec3(0.0f, 1.0f, 0.0f));
+	program1.SetModelMatrix(modelMatrix);
+
+	float vertices4[] = { -2.0f, -0.1f, 2.0f, 0.0f, -2.0f, 0.0f, -2.0f, -0.1f, 2.0f, -0.1f, 2.0f, 0.0f };
+	glVertexAttribPointer(program1.positionAttribute, 2, GL_FLOAT, false, 0, vertices4);
+	glEnableVertexAttribArray(program1.positionAttribute);
+
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glDisableVertexAttribArray(program1.positionAttribute);
+
+	//Bottom Wall
+	modelMatrix = glm::mat4(1.0f);
+	modelMatrix = glm::translate(modelMatrix, glm::vec3(0.0f, -1.0f, 0.0f));
+	program1.SetModelMatrix(modelMatrix);
+
+	float vertices5[] = { -2.0f, 0.0f, 2.0f, 0.1f, -2.0f, 0.1f, -2.0f, 0.0f, 2.0f, 0.0f, 2.0f, 0.1f };
+	glVertexAttribPointer(program1.positionAttribute, 2, GL_FLOAT, false, 0, vertices5);
+	glEnableVertexAttribArray(program1.positionAttribute);
+
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glDisableVertexAttribArray(program1.positionAttribute);
+}
+
 int main(int argc, char *argv[])
 {
     SDL_Init(SDL_INIT_VIDEO);
@@ -50,26 +244,18 @@ int main(int argc, char *argv[])
     glewInit();
 #endif
 
+	std::srand((int)time(NULL));
+
 	glViewport(0, 0, 640, 360);
 
-	ShaderProgram program0;
-	program0.Load(RESOURCE_FOLDER"vertex_textured.glsl", RESOURCE_FOLDER"fragment_textured.glsl");
+	projectionMatrix = glm::ortho(-1.777f, 1.777f, -1.0f, 1.0f, -1.0f, 1.0f);
 
-	ShaderProgram program1;
+	program0.Load(RESOURCE_FOLDER"vertex_textured.glsl", RESOURCE_FOLDER"fragment_textured.glsl");
 	program1.Load(RESOURCE_FOLDER"vertex.glsl", RESOURCE_FOLDER"fragment.glsl");
 
-	glm::mat4 projectionMatrix = glm::mat4(1.0f);
-	projectionMatrix = glm::ortho(-1.777f, 1.777f, -1.0f, 1.0f, -1.0f, 1.0f);
-	glm::mat4 modelMatrix = glm::mat4(1.0f);
-	glm::mat4 viewMatrix = glm::mat4(1.0f);
-	float scaleRatio = 1.0f;
-	float scaleDirection = 1.0f;
-
-	glClearColor(0.51f, 0.26f, 0.8f, 1.0f);
+	glClearColor(0.05f, 0.46f, 0.73f, 1.0f);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-	float lastFrameTicks = 0.0f;
 
     SDL_Event event;
     bool done = false;
@@ -77,7 +263,10 @@ int main(int argc, char *argv[])
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT || event.type == SDL_WINDOWEVENT_CLOSE) {
                 done = true;
-            }
+			}
+			else if (event.type == SDL_MOUSEMOTION) {
+				playerPosition = (((float)(360 - event.motion.y) / 360.0f) * 2.0f) - 1.0f;
+			}
         }
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -85,126 +274,9 @@ int main(int argc, char *argv[])
 		float elapsed = ticks - lastFrameTicks;
 		lastFrameTicks = ticks;
 
-		scaleRatio += 0.5f * elapsed * scaleDirection;
-		if (scaleRatio > 1.25f || scaleRatio < 1.0f) {
-			scaleRatio = (scaleRatio > 1.25f ? 1.25f : 1.0f);
-			scaleDirection *= -1.0f;
-		}
-
-		glUseProgram(program0.programID);
-		program0.SetProjectionMatrix(projectionMatrix);
-		program0.SetViewMatrix(viewMatrix);
-
-		//draw a big beautiful bouncing baby bfrog
-		modelMatrix = glm::mat4(1.0f);
-		modelMatrix = glm::translate(modelMatrix, glm::vec3(0.5f, 0.0f, 0.0f));
-		modelMatrix = glm::scale(modelMatrix, glm::vec3(scaleRatio, scaleRatio, 1.0f));
-		
-		program0.SetModelMatrix(modelMatrix);
-
-		GLuint frogTexture = LoadTexture(RESOURCE_FOLDER"frog.png");
-
-		float vertices0[] = { -0.37f, -0.25f, 0.37f, -0.25f, 0.37f, 0.25f, -0.37f, -0.25f, 0.37f, 0.25f, -0.37f, 0.25f };
-		glVertexAttribPointer(program0.positionAttribute, 2, GL_FLOAT, false, 0, vertices0);
-		glEnableVertexAttribArray(program0.positionAttribute);
-
-		float texCoords0[] = { 0.0f, 1.0f,  1.0f,  1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  1.0f,  0.0f, 0.0f, 0.0f };
-		glVertexAttribPointer(program0.texCoordAttribute, 2, GL_FLOAT, false, 0, texCoords0);
-		glEnableVertexAttribArray(program0.texCoordAttribute);
-		
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-		glDisableVertexAttribArray(program0.positionAttribute);
-		glDisableVertexAttribArray(program0.texCoordAttribute);
-
-		float texCoords[] = { 0.0f, 1.0f,  1.0f,  1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  1.0f,  0.0f, 0.0f, 0.0f };
-		glVertexAttribPointer(program0.texCoordAttribute, 2, GL_FLOAT, false, 0, texCoords);
-		glEnableVertexAttribArray(program0.texCoordAttribute);
-		
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-		glDisableVertexAttribArray(program0.positionAttribute);
-		glDisableVertexAttribArray(program0.texCoordAttribute);
-
-		//drawing bee
-		GLuint beeTexture = LoadTexture(RESOURCE_FOLDER"bee.png");
-
-		modelMatrix = glm::mat4(1.0f);
-		modelMatrix = glm::translate(modelMatrix, glm::vec3(-1.5f, 0.4f, 0.0f));
-		modelMatrix = glm::scale(modelMatrix, glm::vec3(-0.5f, 0.5f, 1.0f));
-		program0.SetModelMatrix(modelMatrix);
-
-		float vertices3[] = { -0.3f, -0.25f, 0.3f, -0.25f, 0.3f, 0.25f, -0.3f, -0.25f, 0.3f, 0.25f, -0.3f, 0.25f };
-		glVertexAttribPointer(program0.positionAttribute, 2, GL_FLOAT, false, 0, vertices3);
-		glEnableVertexAttribArray(program0.positionAttribute);
-
-		float texCoords1[] = { 0.0f, 1.0f,  1.0f,  1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  1.0f,  0.0f, 0.0f, 0.0f };
-		glVertexAttribPointer(program0.texCoordAttribute, 2, GL_FLOAT, false, 0, texCoords1);
-		glEnableVertexAttribArray(program0.texCoordAttribute);
-
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-		glDisableVertexAttribArray(program0.positionAttribute);
-		glDisableVertexAttribArray(program0.texCoordAttribute);
-
-		//drawing ghost
-		GLuint ghostTexture = LoadTexture(RESOURCE_FOLDER"ghost.png");
-
-		modelMatrix = glm::mat4(1.0f);
-		modelMatrix = glm::translate(modelMatrix, glm::vec3(1.25f, 0.4f, 0.0f));
-		program0.SetModelMatrix(modelMatrix);
-
-		float vertices4[] = { -0.255f, -0.365f, 0.255f, -0.365f, 0.255f, 0.365f, -0.255f, -0.365f, 0.255f, 0.365f, -0.255f, 0.365f };
-		glVertexAttribPointer(program0.positionAttribute, 2, GL_FLOAT, false, 0, vertices4);
-		glEnableVertexAttribArray(program0.positionAttribute);
-
-		float texCoords2[] = { 0.0f, 1.0f,  1.0f,  1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  1.0f,  0.0f, 0.0f, 0.0f };
-		glVertexAttribPointer(program0.texCoordAttribute, 2, GL_FLOAT, false, 0, texCoords2);
-		glEnableVertexAttribArray(program0.texCoordAttribute);
-
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-		glDisableVertexAttribArray(program0.positionAttribute);
-		glDisableVertexAttribArray(program0.texCoordAttribute);
-
-		glUseProgram(program1.programID); //switching to untextured polygons
-		program1.SetProjectionMatrix(projectionMatrix);
-		program1.SetViewMatrix(viewMatrix);
-		program1.SetColor(0.41f, 0.25f, 0.12f, 1.0f); //tree brown
-
-		//draw trunk
-		modelMatrix = glm::mat4(1.0f);
-		modelMatrix = glm::translate(modelMatrix, glm::vec3(-0.75f, -0.25f, 0.0f));
-		program1.SetModelMatrix(modelMatrix);
-
-		float vertices5[] = { 0.1f, 0.0f, 0.0f, 0.9f, -0.1f, 0.0f };
-		glVertexAttribPointer(program1.positionAttribute, 2, GL_FLOAT, false, 0, vertices5);
-		glEnableVertexAttribArray(program1.positionAttribute);
-
-		glDrawArrays(GL_TRIANGLES, 0, 3);
-		glDisableVertexAttribArray(program1.positionAttribute);
-
-		program1.SetColor(0.15f, 0.57f, 0.21f, 1.0f); //leaf green
-
-		//first green triangle
-		modelMatrix = glm::mat4(1.0f);
-		modelMatrix = glm::translate(modelMatrix, glm::vec3(-0.75f, 0.0f, 0.0f));
-		program1.SetModelMatrix(modelMatrix);
-		
-		float vertices1[] = { 0.25f, 0.0f, 0.0f, 0.5f, -0.25f, 0.0f };
-		glVertexAttribPointer(program1.positionAttribute, 2, GL_FLOAT, false, 0, vertices1);
-		glEnableVertexAttribArray(program1.positionAttribute);
-
-		glDrawArrays(GL_TRIANGLES, 0, 3);
-		glDisableVertexAttribArray(program1.positionAttribute);
-
-		//Second green triangle
-		modelMatrix = glm::mat4(1.0f);
-		modelMatrix = glm::translate(modelMatrix, glm::vec3(-0.75f, 0.2f, 0.0f));
-		program1.SetModelMatrix(modelMatrix);
-
-		float vertices2[] = { 0.25f, 0.0f, 0.0f, 0.5f, -0.25f, 0.0f };
-		glVertexAttribPointer(program1.positionAttribute, 2, GL_FLOAT, false, 0, vertices2);
-		glEnableVertexAttribArray(program1.positionAttribute);
-
-		glDrawArrays(GL_TRIANGLES, 0, 3);
-		glDisableVertexAttribArray(program1.positionAttribute);
+		determinePolygonPositions(elapsed);
+		drawUntexturedPolygons();
+		drawTexturedPolygons();
 
         SDL_GL_SwapWindow(displayWindow);
     }
