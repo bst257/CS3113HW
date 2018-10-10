@@ -66,8 +66,11 @@ float frogXPosition = 0.0f;
 float frogYPosition = 0.0f;
 float frogXDirection = -1.0f;
 float frogYDirection = 1.0f;
-float playerPosition;
+float playerPosition, CPUPosition;
 float lastFrameTicks = 0.0f;
+bool smartCPU = true;
+float arbitCPUDirection = 1.0f;
+float prevFrameDirection = -1.0f;
 glm::mat4 projectionMatrix = glm::mat4(1.0f);
 glm::mat4 modelMatrix = glm::mat4(1.0f);
 glm::mat4 viewMatrix = glm::mat4(1.0f);
@@ -84,16 +87,25 @@ float frogAngle = getFrogAngle();
 void checkFrogCollision() {
 	float playerXPosition = -1.777f + 0.125f;
 	float playerYPosition = playerPosition;
-	float playerHeight = 0.5f;
-	float playerWidth = 0.25f;
+	float CPUXPosition = 1.777f - 0.125f;
+	float CPUYPosition = CPUPosition;
+	float lilypadHeight = 0.5f;
+	float lilypadWidth = 0.25f;
 	float frogHeight = 0.5f * frogScale;
 	float frogWidth = 0.74f * frogScale;
 
-	float xDistance = std::abs(playerXPosition - frogXPosition) - ((playerHeight + frogHeight) / 2.0f);
-	float yDistance = std::abs(playerYPosition - frogYPosition) - ((playerWidth + frogWidth) / 2.0f);
+	float xDistance_player = std::abs(playerXPosition - frogXPosition) - ((lilypadHeight + frogHeight) / 2.0f);
+	float yDistance_player = std::abs(playerYPosition - frogYPosition) - ((lilypadWidth + frogWidth) / 2.0f);
 
-	if (yDistance < 0 && xDistance < 0) {
-		frogXDirection *= -1.0f;
+	float xDistance_CPU = std::abs(CPUXPosition - frogXPosition) - ((lilypadHeight + frogHeight) / 2.0f);
+	float yDistance_CPU = std::abs(CPUYPosition - frogYPosition) - ((lilypadWidth + frogWidth) / 2.0f);
+
+	if (yDistance_player < 0 && xDistance_player < 0 && frogXPosition > -1.6f) {
+		frogXDirection = 1.0f;
+	}
+
+	if (yDistance_CPU < 0 && xDistance_CPU < 0 && frogXPosition < 1.6f) {
+		frogXDirection = -1.0f;
 	}
 }
 
@@ -110,6 +122,18 @@ void determinePolygonPositions(float elapsed) {
 		playerPosition = (playerPosition > 0.65f ? 0.65f : -0.65f);
 	}
 
+	if (smartCPU) {
+		CPUPosition = frogYPosition;
+	}
+	else {
+		CPUPosition += arbitCPUDirection * elapsed * 0.5f;
+	}
+
+	if (CPUPosition > 0.65f || CPUPosition < -0.65f) {
+		CPUPosition = (CPUPosition > 0.65f ? 0.65f : -0.65f);
+		arbitCPUDirection *= -1.0f;
+	}
+
 	checkFrogCollision();
 
 	//reset on win/lose
@@ -119,6 +143,8 @@ void determinePolygonPositions(float elapsed) {
 		frogXDirection = -1.0f;
 		frogYDirection = 1.0f;
 		frogAngle = getFrogAngle();
+		prevFrameDirection = -1.0f;
+		smartCPU = true;
 	}
 
 	frogScale = (-1.0f * (std::abs(frogXPosition) / 1.77f)) + 1.2f;
@@ -128,27 +154,6 @@ void drawTexturedPolygons() {
 	glUseProgram(program0.programID);
 	program0.SetProjectionMatrix(projectionMatrix);
 	program0.SetViewMatrix(viewMatrix);
-
-	//draw the frog
-	modelMatrix = glm::mat4(1.0f);
-	modelMatrix = glm::translate(modelMatrix, glm::vec3(frogXPosition, frogYPosition, 0.0f));
-	modelMatrix = glm::scale(modelMatrix, glm::vec3(frogScale, frogScale, 1.0f));
-
-	program0.SetModelMatrix(modelMatrix);
-
-	GLuint frogTexture = LoadTextureNearest(RESOURCE_FOLDER"frog.png");
-
-	float vertices0[] = { -0.37f, -0.25f, 0.37f, -0.25f, 0.37f, 0.25f, -0.37f, -0.25f, 0.37f, 0.25f, -0.37f, 0.25f };
-	glVertexAttribPointer(program0.positionAttribute, 2, GL_FLOAT, false, 0, vertices0);
-	glEnableVertexAttribArray(program0.positionAttribute);
-
-	float texCoords0[] = { 0.0f, 1.0f,  1.0f,  1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  1.0f,  0.0f, 0.0f, 0.0f };
-	glVertexAttribPointer(program0.texCoordAttribute, 2, GL_FLOAT, false, 0, texCoords0);
-	glEnableVertexAttribArray(program0.texCoordAttribute);
-
-	glDrawArrays(GL_TRIANGLES, 0, 6);
-	glDisableVertexAttribArray(program0.positionAttribute);
-	glDisableVertexAttribArray(program0.texCoordAttribute);
 
 	//drawing left lilypad (player)
 	GLuint beeTexture = LoadTextureLinear(RESOURCE_FOLDER"lilypad.png");
@@ -173,7 +178,7 @@ void drawTexturedPolygons() {
 	GLuint ghostTexture = LoadTextureLinear(RESOURCE_FOLDER"lilypad.png");
 
 	modelMatrix = glm::mat4(1.0f);
-	modelMatrix = glm::translate(modelMatrix, glm::vec3(1.77f, 0.0f, 0.0f));
+	modelMatrix = glm::translate(modelMatrix, glm::vec3(1.77f, CPUPosition, 0.0f));
 	program0.SetModelMatrix(modelMatrix);
 
 	float vertices2[] = { -0.25f, -0.25f, -0.25f, 0.25f, 0.0f, 0.25f, -0.25f, -0.25f, 0.0f, -0.25f, 0.0f, 0.25f };
@@ -182,6 +187,26 @@ void drawTexturedPolygons() {
 
 	float texCoords2[] = { 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f };
 	glVertexAttribPointer(program0.texCoordAttribute, 2, GL_FLOAT, false, 0, texCoords2);
+	glEnableVertexAttribArray(program0.texCoordAttribute);
+
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glDisableVertexAttribArray(program0.positionAttribute);
+	glDisableVertexAttribArray(program0.texCoordAttribute);
+
+	//draw the frog
+	GLuint frogTexture = LoadTextureNearest(RESOURCE_FOLDER"frog.png");
+
+	modelMatrix = glm::mat4(1.0f);
+	modelMatrix = glm::translate(modelMatrix, glm::vec3(frogXPosition, frogYPosition, 0.0f));
+	modelMatrix = glm::scale(modelMatrix, glm::vec3(frogScale, frogScale, 1.0f));
+	program0.SetModelMatrix(modelMatrix);
+
+	float vertices0[] = { -0.37f, -0.25f, 0.37f, -0.25f, 0.37f, 0.25f, -0.37f, -0.25f, 0.37f, 0.25f, -0.37f, 0.25f };
+	glVertexAttribPointer(program0.positionAttribute, 2, GL_FLOAT, false, 0, vertices0);
+	glEnableVertexAttribArray(program0.positionAttribute);
+
+	float texCoords0[] = { 0.0f, 1.0f,  1.0f,  1.0f,  1.0f, 0.0f, 0.0f, 1.0f,  1.0f,  0.0f, 0.0f, 0.0f };
+	glVertexAttribPointer(program0.texCoordAttribute, 2, GL_FLOAT, false, 0, texCoords0);
 	glEnableVertexAttribArray(program0.texCoordAttribute);
 
 	glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -233,10 +258,19 @@ void drawUntexturedPolygons() {
 	glDisableVertexAttribArray(program1.positionAttribute);
 }
 
+void highlyAdvancedArtificialIntelligence() {
+	//whenever the frog jumps off the CPU lilypad, it either becomes unbeatable or just lazes about until a reset
+	if (prevFrameDirection == 1.0f && frogXDirection == -1.0f && smartCPU) {
+		smartCPU = ((rand() % 5) == 0);
+	}
+
+	prevFrameDirection = frogXDirection;
+}
+
 int main(int argc, char *argv[])
 {
     SDL_Init(SDL_INIT_VIDEO);
-    displayWindow = SDL_CreateWindow("The Big Bouncing Frog and their Friends", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 360, SDL_WINDOW_OPENGL);
+    displayWindow = SDL_CreateWindow("The Big Bouncing Frog 2: Lilypong", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 640, 360, SDL_WINDOW_OPENGL);
     SDL_GLContext context = SDL_GL_CreateContext(displayWindow);
     SDL_GL_MakeCurrent(displayWindow, context);
 
@@ -274,6 +308,7 @@ int main(int argc, char *argv[])
 		float elapsed = ticks - lastFrameTicks;
 		lastFrameTicks = ticks;
 
+		highlyAdvancedArtificialIntelligence();
 		determinePolygonPositions(elapsed);
 		drawUntexturedPolygons();
 		drawTexturedPolygons();
