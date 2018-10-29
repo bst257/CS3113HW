@@ -401,11 +401,11 @@ void Render(ShaderProgram &program) {
 		DrawText(program, fontTexture, "Press Space to Begin", 0.15f, -0.075f);
 		break;
 	case MODE_GAME:
-		for (Entity entity : boys) {
-			if (entity.alive) { entity.Draw(program); }
+		for (int i = 0; i < MAX_BOYS; i++) {
+			if (boys[i].alive) { boys[i].Draw(program); }
 		}
-		for (Entity entity : bees) {
-			if (entity.alive) { entity.Draw(program); }
+		for (int i = 0; i < MAX_BEES; i++) {
+			if (bees[i].alive) { bees[i].Draw(program); }
 		}
 		if (frog.alive) { frog.Draw(program); }
 		break;
