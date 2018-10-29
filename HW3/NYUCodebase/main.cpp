@@ -30,7 +30,7 @@ class SheetSprite {
 
 		float size;
 		GLuint textureID;
-		std::vector<unsigned int> indices;
+		std::vector<float> indices;
 		unsigned int currAnimFrame;
 		float u;
 		float v;
@@ -46,9 +46,10 @@ class Entity {
 		void Draw(ShaderProgram &program);
 		void Update(float elapsed);
 
+		bool IsColliding(Entity &entity);
+
 		glm::vec3 position;
 		glm::vec3 velocity;
-		glm::vec3 size;
 
 		float rotation;
 		
@@ -119,10 +120,21 @@ void SheetSprite::Animate() {
 	if (currAnimFrame >= indices.size()) { currAnimFrame = 0; }
 }
 
+bool Entity::IsColliding(Entity &entity) {
+	float e1HalfWidth = (sprite.size * sprite.width) / 2.0f;
+	float e1HalfHeight = (sprite.size * sprite.height) / 2.0f;
+	float e2HalfWidth = (entity.sprite.size * entity.sprite.width) / 2.0f;
+	float e2HalfHeight = (entity.sprite.size * entity.sprite.height) / 2.0f;
+	bool xOverlap = ((float)abs(entity.position[0] - position[0]) <= e1HalfWidth + e2HalfWidth);
+	bool yOverlap = ((float)abs(entity.position[1] - position[1]) <= e1HalfHeight + e2HalfHeight);
+	return (xOverlap && yOverlap);
+}
+
 void Entity::Update(float elapsed) {
 	elapsedSinceLastAnim += elapsed;
 	if (elapsedSinceLastAnim >= 1.0f / animFPS) {
 		sprite.Animate();
+		elapsedSinceLastAnim = 0.0f;
 	}
 	if (alive) {
 		position += velocity;
@@ -187,13 +199,15 @@ float lastFrameTicks = 0.0f;
 GLuint fontTexture = LoadTextureNearest(RESOURCE_FOLDER"font_spritesheet.png");
 GLuint frogTexture = LoadTextureNearest(RESOURCE_FOLDER"frog.png");
 GLuint boyTexture = LoadTextureLinear(RESOURCE_FOLDER"boy_spritesheet.png");
-GLuint bulletTexture = LoadTextureNearest(RESOURCE_FOLDER"bee.png");
+GLuint beeTexture = LoadTextureNearest(RESOURCE_FOLDER"bee.png");
 
-#define MAX_BOYS 50
+#define MAX_BOYS 49
 Entity boys[MAX_BOYS];
 
-#define MAX_BULLETS 25
-Entity bullets[MAX_BULLETS];
+#define MAX_BEES 25
+int beeIndex = 0;
+Entity bees[MAX_BEES];
+
 Entity frog;
 
 glm::mat4 projectionMatrix = glm::mat4(1.0f);
@@ -201,8 +215,64 @@ glm::mat4 viewMatrix = glm::mat4(1.0f);
 
 ShaderProgram program0, program1;
 
-enum GameMode { MODE_PRESS_START, MODE_GAME};
+enum GameMode { MODE_PRESS_START, MODE_GAME };
 GameMode mode;
+
+void SetupGame() {
+	//Setup the Enemies
+	for (Entity entity : boys) {
+		entity.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
+		entity.animFPS = 8.0f;
+		entity.elapsedSinceLastAnim = 0.0f;
+		entity.alive = false;
+		entity.sprite = SheetSprite(boyTexture, 0.25f, 0.25f, 1.0f);
+		entity.sprite.indices.insert(entity.sprite.indices.end(), { 0.0f, 0.0f, 0.0f, 0.25f, 0.0f, 0.5f, 0.0f, 0.75f });
+	}
+
+	//Setup the Bullets
+	for (Entity entity : bees) {
+		entity.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
+		entity.animFPS = 1.0f;
+		entity.elapsedSinceLastAnim = 0.0f;
+		entity.alive = false;
+		entity.sprite = SheetSprite(beeTexture, 0.25f, 0.25f, 1.0f);
+		entity.sprite.indices.insert(entity.sprite.indices.end(), { 0.0f, 0.0f });
+	}
+
+	//Setup the player
+	frog.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
+	frog.animFPS = 1.0f;
+	frog.elapsedSinceLastAnim = 0.0f;
+	frog.alive = false;
+	frog.sprite = SheetSprite(beeTexture, 0.25f, 0.25f, 1.0f);
+	frog.sprite.indices.insert(frog.sprite.indices.end(), { 0.0f, 0.0f });
+}
+
+void NewGame() {
+	glm::vec3 currPos = glm::vec3(-0.8f, 1.8f, 0.0f);
+	for (Entity entity : boys) {
+		entity.alive = true;
+		entity.position = currPos;
+		currPos[0] += 0.25f;
+		if (currPos[0] > 1.8f) {
+			currPos[0] = -0.8f;
+			currPos[1] -= 0.25f;
+		}
+		entity.velocity = glm::vec3(0.005f, 0.0f, 0.0f);
+	}
+	frog.alive = true;
+	frog.position = glm::vec3(0.0f, -1.8, 0.0f);
+}
+
+void GameOver() {
+	for (Entity entity : boys) {
+		entity.alive = false;
+	}
+	for (Entity entity : bees) {
+		entity.alive = false;
+	}
+	frog.alive = false;
+}
 
 void DrawText(ShaderProgram &program, GLuint fontTexture, std::string text, float size, float spacing) {
 	float character_size = 1.0 / 16.0f;
@@ -248,10 +318,6 @@ void DrawText(ShaderProgram &program, GLuint fontTexture, std::string text, floa
 void ProcessInput() {
 	switch (mode) {
 	case MODE_PRESS_START:
-		modelMatrix = glm::mat4(1.0f);
-		modelMatrix = glm::translate(modelMatrix, glm::vec3(-0.85f, 0.0f, 0.0f));
-		program0.SetModelMatrix(modelMatrix);
-		DrawText(program0, fontTexture, "tBBF3: Modern Warfare", 0.15f, -0.075f);
 	}
 }
 
@@ -259,10 +325,31 @@ void Update(float elapsed) {
 	
 }
 
-void Render() {
+void Render(ShaderProgram &program) {
+	switch (mode) {
+	case MODE_PRESS_START:
+		glm::mat4 modelMatrix = glm::mat4(1.0f);
+		modelMatrix = glm::translate(modelMatrix, glm::vec3(-0.85f, 0.0f, 0.0f));
+		program0.SetModelMatrix(modelMatrix);
+		DrawText(program0, fontTexture, "tBBF3: Modern Warfare", 0.15f, -0.075f);
+		modelMatrix = glm::translate(modelMatrix, glm::vec3(0.0f, -0.25f, 0.0f));
+		program0.SetModelMatrix(modelMatrix);
+		DrawText(program0, fontTexture, "Press Space to Begin", 0.15f, -0.075f);
+		break;
+	case MODE_GAME:
+		for (Entity entity : boys) {
+			if (entity.alive) { entity.Draw(program); }
+		}
+		for (Entity entity : bees) {
+			if (entity.alive) { entity.Draw(program); }
+		}
+		if (frog.alive) { frog.Draw(program); }
+		break;
+	}
 	
 }
 
+/*
 void drawUntexturedPolygons() {
 	//Bottom Wall
 	modelMatrix = glm::mat4(1.0f);
@@ -275,7 +362,7 @@ void drawUntexturedPolygons() {
 
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 	glDisableVertexAttribArray(program1.positionAttribute);
-}
+} */
 
 int main(int argc, char *argv[])
 {
@@ -297,7 +384,6 @@ int main(int argc, char *argv[])
 	program0.Load(RESOURCE_FOLDER"vertex_textured.glsl", RESOURCE_FOLDER"fragment_textured.glsl");
 	program1.Load(RESOURCE_FOLDER"vertex.glsl", RESOURCE_FOLDER"fragment.glsl");
 
-	program0.SetModelMatrix(modelMatrix);
 	program0.SetProjectionMatrix(projectionMatrix);
 	program0.SetViewMatrix(viewMatrix);
 
@@ -314,8 +400,10 @@ int main(int argc, char *argv[])
             if (event.type == SDL_QUIT || event.type == SDL_WINDOWEVENT_CLOSE) {
                 done = true;
 			}
-			else if (event.type == SDL_MOUSEMOTION) {
-				//playerPosition = (((float)(360 - event.motion.y) / 360.0f) * 2.0f) - 1.0f;
+			else if (event.type == SDL_KEYDOWN) {
+				if (event.key.keysym.scancode == SDL_SCANCODE_SPACE) {
+					// DO AN ACTION WHEN SPACE IS PRESSED!
+				}
 			}
         }
         glClear(GL_COLOR_BUFFER_BIT);
