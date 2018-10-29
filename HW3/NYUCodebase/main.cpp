@@ -50,6 +50,7 @@ class Entity {
 
 		glm::vec3 position;
 		glm::vec3 velocity;
+		glm::vec3 size;
 
 		float rotation;
 		
@@ -91,14 +92,13 @@ void SheetSprite::Draw(ShaderProgram &program) {
 		u + width, v + height
 	};
 
-	float aspect = width / height;
 	float vertices[] = {
-		-0.5f * size * aspect, -0.5f * size,
-		0.5f * size * aspect, 0.5f * size,
-		-0.5f * size * aspect, 0.5f * size,
-		0.5f * size * aspect, 0.5f * size,
-		-0.5f * size * aspect, -0.5f * size,
-		0.5f * size * aspect, -0.5f * size,
+		-0.5f * size, -0.5f * size,
+		0.5f * size, 0.5f * size,
+		-0.5f * size, 0.5f * size,
+		0.5f * size, 0.5f * size,
+		-0.5f * size, -0.5f * size,
+		0.5f * size, -0.5f * size,
 	};
 
 	glVertexAttribPointer(program.positionAttribute, 2, GL_FLOAT, false, 0, vertices);
@@ -121,23 +121,25 @@ void SheetSprite::Animate() {
 }
 
 bool Entity::IsColliding(Entity &entity) {
-	float e1HalfWidth = (sprite.size * sprite.width) / 2.0f;
-	float e1HalfHeight = (sprite.size * sprite.height) / 2.0f;
-	float e2HalfWidth = (entity.sprite.size * entity.sprite.width) / 2.0f;
-	float e2HalfHeight = (entity.sprite.size * entity.sprite.height) / 2.0f;
+	float e1HalfWidth = (sprite.size * size[0]) / 2.0f;
+	float e1HalfHeight = (sprite.size * size[1]) / 2.0f;
+	float e2HalfWidth = (entity.sprite.size * entity.size[0]) / 2.0f;
+	float e2HalfHeight = (entity.sprite.size * entity.size[1]) / 2.0f;
 	bool xOverlap = ((float)abs(entity.position[0] - position[0]) <= e1HalfWidth + e2HalfWidth);
 	bool yOverlap = ((float)abs(entity.position[1] - position[1]) <= e1HalfHeight + e2HalfHeight);
 	return (xOverlap && yOverlap);
 }
 
 void Entity::Update(float elapsed) {
-	elapsedSinceLastAnim += elapsed;
-	if (elapsedSinceLastAnim >= 1.0f / animFPS) {
-		sprite.Animate();
-		elapsedSinceLastAnim = 0.0f;
-	}
 	if (alive) {
-		position += velocity;
+		elapsedSinceLastAnim += elapsed;
+		if (elapsedSinceLastAnim >= 1.0f / animFPS) {
+			sprite.Animate();
+			elapsedSinceLastAnim = 0.0f;
+		}
+		for (int i = 0; i < 3; i++) {
+			position[i] += velocity[i] * elapsed;
+		}
 	}
 	else if (!alive) {
 		position = glm::vec3(-100.0f, 0.0f, 0.0f);
@@ -147,6 +149,7 @@ void Entity::Update(float elapsed) {
 void Entity::Draw(ShaderProgram &program) {
 	glm::mat4 modelMatrix = glm::mat4(1.0f);
 	modelMatrix = glm::translate(modelMatrix, position);
+	modelMatrix = glm::scale(modelMatrix, size);
 
 	program.SetModelMatrix(modelMatrix);
 	sprite.Draw(program);
@@ -196,10 +199,7 @@ GLuint LoadTextureLinear(const char *filePath) {
 
 float lastFrameTicks = 0.0f;
 
-GLuint fontTexture = LoadTextureNearest(RESOURCE_FOLDER"font_spritesheet.png");
-GLuint frogTexture = LoadTextureNearest(RESOURCE_FOLDER"frog.png");
-GLuint boyTexture = LoadTextureLinear(RESOURCE_FOLDER"boy_spritesheet.png");
-GLuint beeTexture = LoadTextureNearest(RESOURCE_FOLDER"bee.png");
+GLuint fontTexture, frogTexture, boyTexture, beeTexture;
 
 #define MAX_BOYS 49
 Entity boys[MAX_BOYS];
@@ -213,30 +213,33 @@ Entity frog;
 glm::mat4 projectionMatrix = glm::mat4(1.0f);
 glm::mat4 viewMatrix = glm::mat4(1.0f);
 
-ShaderProgram program0, program1;
+ShaderProgram program;
 
 enum GameMode { MODE_PRESS_START, MODE_GAME };
 GameMode mode;
 
 void SetupGame() {
 	//Setup the Enemies
-	for (Entity entity : boys) {
-		entity.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
-		entity.animFPS = 8.0f;
-		entity.elapsedSinceLastAnim = 0.0f;
-		entity.alive = false;
-		entity.sprite = SheetSprite(boyTexture, 0.25f, 0.25f, 1.0f);
-		entity.sprite.indices.insert(entity.sprite.indices.end(), { 0.0f, 0.0f, 0.0f, 0.25f, 0.0f, 0.5f, 0.0f, 0.75f });
+	for (int i = 0; i < MAX_BOYS; i++) {
+		boys[i].velocity = glm::vec3(0.0f, 0.0f, 0.0f);
+		boys[i].animFPS = 8.0f;
+		boys[i].elapsedSinceLastAnim = 0.0f;
+		boys[i].alive = false;
+		boys[i].sprite = SheetSprite(boyTexture, 0.25f, 0.25f, 0.4f);
+		boys[i].size = glm::vec3(1.0f, 1.0f, 1.0f);
+		boys[i].sprite.indices.clear();
+		boys[i].sprite.indices.insert(boys[i].sprite.indices.end(), { 0.0f, 0.0f, 0.0f, 0.25f, 0.0f, 0.5f, 0.0f, 0.75f });
 	}
 
 	//Setup the Bullets
-	for (Entity entity : bees) {
-		entity.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
-		entity.animFPS = 1.0f;
-		entity.elapsedSinceLastAnim = 0.0f;
-		entity.alive = false;
-		entity.sprite = SheetSprite(beeTexture, 0.25f, 0.25f, 1.0f);
-		entity.sprite.indices.insert(entity.sprite.indices.end(), { 0.0f, 0.0f });
+	for (int i = 0; i < MAX_BEES; i++) {
+		bees[i].velocity = glm::vec3(0.0f, 0.0f, 0.0f);
+		bees[i].animFPS = 1.0f;
+		bees[i].elapsedSinceLastAnim = 0.0f;
+		bees[i].alive = false;
+		bees[i].sprite = SheetSprite(beeTexture, 1.0f, 1.0f, 0.1f);
+		bees[i].size = glm::vec3(56.0f / 48.0f, 1.0f, 1.0f);
+		bees[i].sprite.indices.insert(bees[i].sprite.indices.end(), { 0.0f, 0.0f });
 	}
 
 	//Setup the player
@@ -244,34 +247,39 @@ void SetupGame() {
 	frog.animFPS = 1.0f;
 	frog.elapsedSinceLastAnim = 0.0f;
 	frog.alive = false;
-	frog.sprite = SheetSprite(beeTexture, 0.25f, 0.25f, 1.0f);
+	frog.sprite = SheetSprite(frogTexture, 1.0f, 1.0f, 0.33f);
+	frog.size = glm::vec3(58.0f / 39.0f, 1.0f, 1.0f);
 	frog.sprite.indices.insert(frog.sprite.indices.end(), { 0.0f, 0.0f });
 }
 
 void NewGame() {
 	glm::vec3 currPos = glm::vec3(-0.8f, 1.8f, 0.0f);
-	for (Entity entity : boys) {
-		entity.alive = true;
-		entity.position = currPos;
-		currPos[0] += 0.25f;
-		if (currPos[0] > 1.8f) {
+	for (int i = 0; i < MAX_BOYS; i++) {
+		boys[i].alive = true;
+		boys[i].position = currPos;
+		currPos[0] += 0.266666f;
+		if ((i + 1) % 7 == 0) {
 			currPos[0] = -0.8f;
 			currPos[1] -= 0.25f;
 		}
-		entity.velocity = glm::vec3(0.005f, 0.0f, 0.0f);
+		boys[i].velocity[1] = -0.1f;
 	}
 	frog.alive = true;
 	frog.position = glm::vec3(0.0f, -1.8, 0.0f);
 }
 
 void GameOver() {
-	for (Entity entity : boys) {
-		entity.alive = false;
+	for (int i = 0; i < MAX_BOYS; i++) {
+		boys[i].alive = false;
+		boys[i].position = glm::vec3(-100.0f, 0.0f, 0.0f);
 	}
-	for (Entity entity : bees) {
-		entity.alive = false;
+	for (int i = 0; i < MAX_BEES; i++) {
+		bees[i].alive = false;
+		bees[i].position = glm::vec3(-100.0f, 0.0f, 0.0f);
 	}
 	frog.alive = false;
+	frog.position = glm::vec3(-100.0f, 0.0f, 0.0f);
+	mode = MODE_PRESS_START;
 }
 
 void DrawText(ShaderProgram &program, GLuint fontTexture, std::string text, float size, float spacing) {
@@ -315,14 +323,70 @@ void DrawText(ShaderProgram &program, GLuint fontTexture, std::string text, floa
 
 }
 
-void ProcessInput() {
-	switch (mode) {
-	case MODE_PRESS_START:
+void ShootBee() {
+	if (!(bees[beeIndex].alive)) {
+		bees[beeIndex].alive = true;
+		bees[beeIndex].position = frog.position + glm::vec3(0.0f, 0.2f, 0.0f);
+		bees[beeIndex].velocity[1] = 0.5f;
+		beeIndex += 1;
+		if (beeIndex >= MAX_BEES) { beeIndex = 0; }
 	}
 }
 
 void Update(float elapsed) {
-	
+	switch (mode) {
+	case MODE_PRESS_START:
+		break;
+	case MODE_GAME:
+		const Uint8 *keys = SDL_GetKeyboardState(NULL);
+
+		//Update Frog
+		if (keys[SDL_SCANCODE_LEFT]) {
+			frog.velocity[0] = -0.5f;
+		}
+		else if (keys[SDL_SCANCODE_RIGHT]) {
+			frog.velocity[0] = 0.5f;
+		}
+		else {
+			frog.velocity[0] = 0.0f;
+		}
+		frog.Update(elapsed);
+		if (frog.position[0] >= 1.0f || frog.position[0] <= -1.0f) {
+			frog.position[0] = (frog.position[0] >= 1.0f ? 1.0f : -1.0f);
+		}
+
+		//Update Bees
+		for (int i = 0; i < MAX_BEES; i++) {
+			if (bees[i].alive) {
+				for (int j = 0; j < MAX_BOYS; j++) {
+					if (bees[i].IsColliding(boys[j])) {
+						bees[i].alive = false;
+						boys[j].alive = false;
+						//break;
+					}
+				}
+				if (bees[i].position[1] > 2.1f) { bees[i].alive = false; }
+			}
+			bees[i].Update(elapsed);
+		}
+
+		//Update Boys
+		bool frogVictory = true;
+		for (int i = 0; i < MAX_BOYS; i++) {
+			if (boys[i].alive) {
+				frogVictory = false;
+				if (boys[i].position[1] < -1.6f) {
+					GameOver();
+					break;
+				}
+			}
+			boys[i].Update(elapsed);
+		}
+		if (frogVictory) {
+			GameOver();
+		}
+		break;
+	}
 }
 
 void Render(ShaderProgram &program) {
@@ -330,11 +394,11 @@ void Render(ShaderProgram &program) {
 	case MODE_PRESS_START:
 		glm::mat4 modelMatrix = glm::mat4(1.0f);
 		modelMatrix = glm::translate(modelMatrix, glm::vec3(-0.85f, 0.0f, 0.0f));
-		program0.SetModelMatrix(modelMatrix);
-		DrawText(program0, fontTexture, "tBBF3: Modern Warfare", 0.15f, -0.075f);
+		program.SetModelMatrix(modelMatrix);
+		DrawText(program, fontTexture, "tBBF3: Modern Warfare", 0.15f, -0.075f);
 		modelMatrix = glm::translate(modelMatrix, glm::vec3(0.0f, -0.25f, 0.0f));
-		program0.SetModelMatrix(modelMatrix);
-		DrawText(program0, fontTexture, "Press Space to Begin", 0.15f, -0.075f);
+		program.SetModelMatrix(modelMatrix);
+		DrawText(program, fontTexture, "Press Space to Begin", 0.15f, -0.075f);
 		break;
 	case MODE_GAME:
 		for (Entity entity : boys) {
@@ -349,21 +413,6 @@ void Render(ShaderProgram &program) {
 	
 }
 
-/*
-void drawUntexturedPolygons() {
-	//Bottom Wall
-	modelMatrix = glm::mat4(1.0f);
-	modelMatrix = glm::translate(modelMatrix, glm::vec3(0.0f, -1.0f, 0.0f));
-	program1.SetModelMatrix(modelMatrix);
-
-	float vertices5[] = { -2.0f, 0.0f, 2.0f, 0.1f, -2.0f, 0.1f, -2.0f, 0.0f, 2.0f, 0.0f, 2.0f, 0.1f };
-	glVertexAttribPointer(program1.positionAttribute, 2, GL_FLOAT, false, 0, vertices5);
-	glEnableVertexAttribArray(program1.positionAttribute);
-
-	glDrawArrays(GL_TRIANGLES, 0, 6);
-	glDisableVertexAttribArray(program1.positionAttribute);
-} */
-
 int main(int argc, char *argv[])
 {
     SDL_Init(SDL_INIT_VIDEO);
@@ -375,23 +424,27 @@ int main(int argc, char *argv[])
     glewInit();
 #endif
 
-	std::srand((int)time(NULL));
-
 	glViewport(0, 0, 360, 720);
 
 	projectionMatrix = glm::ortho(-1.0f, 1.0f, -2.0f, 2.0f, -1.0f, 1.0f);
 
-	program0.Load(RESOURCE_FOLDER"vertex_textured.glsl", RESOURCE_FOLDER"fragment_textured.glsl");
-	program1.Load(RESOURCE_FOLDER"vertex.glsl", RESOURCE_FOLDER"fragment.glsl");
-
-	program0.SetProjectionMatrix(projectionMatrix);
-	program0.SetViewMatrix(viewMatrix);
+	program.Load(RESOURCE_FOLDER"vertex_textured.glsl", RESOURCE_FOLDER"fragment_textured.glsl");
+	
+	program.SetProjectionMatrix(projectionMatrix);
+	program.SetViewMatrix(viewMatrix);
 
 	glClearColor(0.05f, 0.46f, 0.73f, 1.0f);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+	fontTexture = LoadTextureNearest(RESOURCE_FOLDER"font_spritesheet.png");
+	frogTexture = LoadTextureNearest(RESOURCE_FOLDER"frog.png");
+	boyTexture = LoadTextureLinear(RESOURCE_FOLDER"boy_spritesheet.png");
+	beeTexture = LoadTextureNearest(RESOURCE_FOLDER"bee.png");
+
 	mode = MODE_PRESS_START;
+
+	SetupGame();
 
     SDL_Event event;
     bool done = false;
@@ -402,7 +455,15 @@ int main(int argc, char *argv[])
 			}
 			else if (event.type == SDL_KEYDOWN) {
 				if (event.key.keysym.scancode == SDL_SCANCODE_SPACE) {
-					// DO AN ACTION WHEN SPACE IS PRESSED!
+					switch (mode) {
+					case MODE_PRESS_START:
+						mode = MODE_GAME;
+						NewGame();
+						break;
+					case MODE_GAME:
+						ShootBee();
+						break;
+					}
 				}
 			}
         }
@@ -411,13 +472,9 @@ int main(int argc, char *argv[])
 		float ticks = (float)SDL_GetTicks() / 1000.0f;
 		float elapsed = ticks - lastFrameTicks;
 		lastFrameTicks = ticks;
-		/*
-		determinePolygonPositions(elapsed);
-		drawUntexturedPolygons();
-		drawTexturedPolygons();
-		*/
-
 		
+		Update(elapsed);
+		Render(program);
 
         SDL_GL_SwapWindow(displayWindow);
     }
