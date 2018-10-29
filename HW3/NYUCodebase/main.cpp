@@ -286,7 +286,7 @@ void DrawText(ShaderProgram &program, GLuint fontTexture, std::string text, floa
 	float character_size = 1.0 / 16.0f;
 	std::vector<float> vertexData;
 	std::vector<float> texCoordData;
-	for (int i = 0; i < text.size(); i++) {
+	for (int i = 0; i < (int)text.size(); i++) {
 		int spriteIndex = (int)text[i];
 		float texture_x = (float)(spriteIndex % 16) / 16.0f;
 		float texture_y = (float)(spriteIndex / 16) / 16.0f;
