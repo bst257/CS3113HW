@@ -11,6 +11,12 @@
 #include "stb_image.h"
 #include <ctime>
 #include <vector>
+#include <fstream>
+#include <string>
+#include <iostream>
+#include <sstream>
+
+using namespace std;
 
 #ifdef _WINDOWS
 #define RESOURCE_FOLDER ""
@@ -30,7 +36,7 @@ class SheetSprite {
 
 		float size;
 		GLuint textureID;
-		std::vector<float> indices;
+		vector<float> indices;
 		unsigned int currAnimFrame;
 		float u;
 		float v;
@@ -40,25 +46,38 @@ class SheetSprite {
 		void Animate();
 };
 
+enum EntityType {ENTITY_PLAYER, ENTITY_COIN};
+
 class Entity {
 	public:
 
 		void Draw(ShaderProgram &program);
-		void Update(float elapsed);
+		void Animate(float elapsed);
+		void UpdateX(float elapsed);
+		void UpdateY(float elapsed);
 
 		bool IsColliding(Entity &entity);
 
 		glm::vec3 position;
 		glm::vec3 velocity;
 		glm::vec3 size;
+		glm::vec3 acceleration;
+
+		bool isStatic;
 
 		float rotation;
 		
 		SheetSprite sprite;
 
-		bool alive;
 		float animFPS;
 		float elapsedSinceLastAnim;
+
+		EntityType entityType;
+
+		bool collidedTop;
+		bool collidedBottom;
+		bool collidedLeft;
+		bool collidedRight;
 };
 
 SheetSprite::SheetSprite() {
@@ -130,19 +149,31 @@ bool Entity::IsColliding(Entity &entity) {
 	return (xOverlap && yOverlap);
 }
 
-void Entity::Update(float elapsed) {
-	if (alive) {
-		elapsedSinceLastAnim += elapsed;
-		if (elapsedSinceLastAnim >= 1.0f / animFPS) {
-			sprite.Animate();
-			elapsedSinceLastAnim = 0.0f;
-		}
-		for (int i = 0; i < 3; i++) {
-			position[i] += velocity[i] * elapsed;
-		}
+float lerp(float v0, float v1, float t) {
+	return (float)((1.0 - t)*v0 + t * v1);
+}
+
+void Entity::Animate(float elapsed) {
+	elapsedSinceLastAnim += elapsed;
+	if (elapsedSinceLastAnim >= 1.0f / animFPS) {
+		sprite.Animate();
+		elapsedSinceLastAnim = 0.0f;
 	}
-	else if (!alive) {
-		position = glm::vec3(-100.0f, 0.0f, 0.0f);
+}
+
+void Entity::UpdateX(float elapsed) {
+	if (!isStatic) {
+		velocity[0] += acceleration[0] * elapsed;
+		velocity[0] = lerp(velocity[0], 0.0f, 2.0f * elapsed);
+		position[0] += velocity[0] * elapsed;
+	}
+}
+
+void Entity::UpdateY(float elapsed) {
+	if (!isStatic) {
+		velocity[1] += acceleration[1] * elapsed;
+		//velocity[1] = lerp(velocity[1], 0.0f, 0.5f * elapsed);
+		position[1] += velocity[1] * elapsed;
 	}
 }
 
@@ -160,7 +191,7 @@ GLuint LoadTextureNearest(const char *filePath) {
 	unsigned char* image = stbi_load(filePath, &w, &h, &comp, STBI_rgb_alpha);
 
 	if (image == NULL) {
-		std::cout << "Unable to load image. Make sure the path is correct\n";
+		cout << "Unable to load image. Make sure the path is correct\n";
 		assert(false);
 	}
 
@@ -181,7 +212,7 @@ GLuint LoadTextureLinear(const char *filePath) {
 	unsigned char* image = stbi_load(filePath, &w, &h, &comp, STBI_rgb_alpha);
 
 	if (image == NULL) {
-		std::cout << "Unable to load image. Make sure the path is correct\n";
+		cout << "Unable to load image. Make sure the path is correct\n";
 		assert(false);
 	}
 
@@ -199,93 +230,206 @@ GLuint LoadTextureLinear(const char *filePath) {
 
 float lastFrameTicks = 0.0f;
 
-GLuint fontTexture, frogTexture, boyTexture, beeTexture;
+GLuint fontTexture, coinTexture, tilesTexture, playerTexture;
 
-#define MAX_BOYS 49
-Entity boys[MAX_BOYS];
+#define FIXED_TIMESTEP 0.01666667f
+#define TILE_SIZE 0.2f
+#define LEVEL1_WIDTH 20
+#define LEVEL1_HEIGHT 27
+#define SPRITE_COUNT_X 14
+#define SPRITE_COUNT_Y 14
+#define NUM_SOLIDS 12
 
-#define MAX_BEES 25
-int beeIndex = 0;
-Entity bees[MAX_BEES];
+vector<float> level1_vertexData;
+vector<float> level1_texCoordData;
 
-Entity frog;
+vector<Entity> coins;
+Entity Player;
+
+int mapWidth, mapHeight;
+unsigned int** levelData;
+unsigned int solid_indices[NUM_SOLIDS] = {
+	148, 17, 170, 171, 157, 143, 131, 117, 103, 134, 120, 106
+};
 
 glm::mat4 projectionMatrix = glm::mat4(1.0f);
 glm::mat4 viewMatrix = glm::mat4(1.0f);
 
 ShaderProgram program;
 
-enum GameMode { MODE_PRESS_START, MODE_GAME };
-GameMode mode;
+//Tilemap/Level Generation
+bool readHeader(ifstream &stream) {
+	string line;
+	mapWidth = -1;
+	mapHeight = -1;
+	while (getline(stream, line)) {
+		if (line == "") { break; }
+		istringstream sStream(line);
+		string key, value;
+		getline(sStream, key, '=');
+		getline(sStream, value);
+		if (key == "width") {
+			mapWidth = atoi(value.c_str());
+		}
+		else if (key == "height") {
+			mapHeight = atoi(value.c_str());
+		}
+	}
+	if (mapWidth == -1 || mapHeight == -1) {
+		return false;
+	}
+	else { // allocate our map data
+		levelData = new unsigned int*[mapHeight];
+		for (int i = 0; i < mapHeight; ++i) {
+			levelData[i] = new unsigned int[mapWidth];
+		}
+		return true;
+	}
+}
+
+bool readLayerData(ifstream &stream) {
+	string line;
+	while (getline(stream, line)) {
+		if (line == "") { break; }
+		istringstream sStream(line);
+		string key, value;
+		getline(sStream, key, '=');
+		getline(sStream, value);
+		if (key == "data") {
+			for (int y = 0; y < mapHeight; y++) {
+				getline(stream, line);
+				istringstream lineStream(line);
+				string tile;
+				for (int x = 0; x < mapWidth; x++) {
+					getline(lineStream, tile, ',');
+					unsigned int val = (unsigned int)atoi(tile.c_str());
+					if (val > 0) {
+						levelData[y][x] = val - 1;
+					}
+					else {
+						levelData[y][x] = 0;
+					}
+				}
+			}
+		}
+	}
+	return true;
+}
+
+void placeEntity(string type, float placeX, float placeY) {
+	if (type == "player") {
+		Player.entityType = ENTITY_PLAYER;
+		Player.position = glm::vec3(placeX, placeY, 0.0f);
+		Player.isStatic = false;
+		Player.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
+		Player.animFPS = 1.0f;
+		Player.elapsedSinceLastAnim = 0.0f;
+		Player.sprite = SheetSprite(playerTexture, 0.5f, 0.5f, 1.0f);
+		Player.size = glm::vec3(0.165714f, 0.111429f, 1.0f);
+		Player.sprite.indices.insert(Player.sprite.indices.end(), {
+			0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.5f,
+			0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.5f,
+			0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.5f,
+			0.0f, 0.0f, 0.5f, 0.0f, 0.5f, 0.5f, 0.5f, 0.0f
+		});
+		Player.animFPS = 4.0f;
+	}
+	else if (type == "coin") {
+		Entity newCoin;
+		newCoin.entityType = ENTITY_COIN;
+		newCoin.position = glm::vec3(placeX + 0.5f * TILE_SIZE, placeY, 0.0f);
+		newCoin.isStatic = false;
+		newCoin.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
+		newCoin.animFPS = 1.0f;
+		newCoin.elapsedSinceLastAnim = 0.0f;
+		newCoin.sprite = SheetSprite(coinTexture, 1.0f, 1.0f, 1.0f);
+		newCoin.size = glm::vec3(0.1f, 0.1444f, 1.0f);
+		newCoin.sprite.indices.insert(newCoin.sprite.indices.end(), { 0.0f, 0.0f });
+		coins.push_back(newCoin);
+	}
+}
+
+bool readEntityData(ifstream &stream) {
+	string line;
+	string type;
+	while (getline(stream, line)) {
+		if (line == "") { break; }
+		istringstream sStream(line);
+		string key, value;
+		getline(sStream, key, '=');
+		getline(sStream, value);
+		if (key == "type") {
+			type = value;
+		}
+		else if (key == "location") {
+			istringstream lineStream(value);
+			string xPosition, yPosition;
+			getline(lineStream, xPosition, ',');
+			getline(lineStream, yPosition, ',');
+
+			float placeX = atoi(xPosition.c_str()) * TILE_SIZE;
+			float placeY = atoi(yPosition.c_str()) * -TILE_SIZE;
+			
+			placeEntity(type, placeX, placeY);
+		}
+	}
+	return true;
+}
 
 void SetupGame() {
-	//Setup the Enemies
-	for (int i = 0; i < MAX_BOYS; i++) {
-		boys[i].velocity = glm::vec3(0.0f, 0.0f, 0.0f);
-		boys[i].animFPS = 8.0f;
-		boys[i].elapsedSinceLastAnim = 0.0f;
-		boys[i].alive = false;
-		boys[i].sprite = SheetSprite(boyTexture, 0.25f, 0.25f, 0.4f);
-		boys[i].size = glm::vec3(1.0f, 1.0f, 1.0f);
-		boys[i].sprite.indices.clear();
-		boys[i].sprite.indices.insert(boys[i].sprite.indices.end(), { 0.0f, 0.0f, 0.0f, 0.25f, 0.0f, 0.5f, 0.0f, 0.75f });
+	//Setup the Level/Objects
+	ifstream infile(RESOURCE_FOLDER"tilemapData.txt");
+	string line;
+	while (getline(infile, line)) {
+		if (line == "[header]") {
+			(!readHeader(infile));
+		}
+		else if (line == "[layer]") {
+			readLayerData(infile);
+		}
+		else if (line == "[coinLayer]") {
+			readEntityData(infile);
+		}
 	}
 
-	//Setup the Bullets
-	for (int i = 0; i < MAX_BEES; i++) {
-		bees[i].velocity = glm::vec3(0.0f, 0.0f, 0.0f);
-		bees[i].animFPS = 1.0f;
-		bees[i].elapsedSinceLastAnim = 0.0f;
-		bees[i].alive = false;
-		bees[i].sprite = SheetSprite(beeTexture, 1.0f, 1.0f, 0.1f);
-		bees[i].size = glm::vec3(56.0f / 48.0f, 1.0f, 1.0f);
-		bees[i].sprite.indices.insert(bees[i].sprite.indices.end(), { 0.0f, 0.0f });
+	for (int y = 0; y < LEVEL1_HEIGHT; y++) {
+		for (int x = 0; x < LEVEL1_WIDTH; x++) {
+			if (levelData[y][x] != 0) {
+				float u = (float)(((int)levelData[y][x]) % SPRITE_COUNT_X) / (float)SPRITE_COUNT_X;
+				float v = (float)(((int)levelData[y][x]) / SPRITE_COUNT_X) / (float)SPRITE_COUNT_Y;
+
+				//manually putting these in b/c of annoying padding in the spritesheet
+				float spriteWidth = 0.069444444f;
+				float spriteHeight = 0.069444444f;
+
+				level1_vertexData.insert(level1_vertexData.end(), {
+					TILE_SIZE * x, -TILE_SIZE * y,
+					TILE_SIZE * x, (-TILE_SIZE * y) - TILE_SIZE,
+					(TILE_SIZE * x) + TILE_SIZE, (-TILE_SIZE * y) - TILE_SIZE,
+					TILE_SIZE * x, -TILE_SIZE * y,
+					(TILE_SIZE * x) + TILE_SIZE, (-TILE_SIZE * y) - TILE_SIZE,
+					(TILE_SIZE * x) + TILE_SIZE, -TILE_SIZE * y
+					});
+				level1_texCoordData.insert(level1_texCoordData.end(), {
+					u, v,
+					u, v + (spriteHeight),
+					u + spriteWidth, v + (spriteHeight),
+					u, v,
+					u + spriteWidth, v + (spriteHeight),
+					u + spriteWidth, v
+					});
+			}
+		}
 	}
 
 	//Setup the player
-	frog.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
-	frog.animFPS = 1.0f;
-	frog.elapsedSinceLastAnim = 0.0f;
-	frog.alive = false;
-	frog.sprite = SheetSprite(frogTexture, 1.0f, 1.0f, 0.33f);
-	frog.size = glm::vec3(58.0f / 39.0f, 1.0f, 1.0f);
-	frog.sprite.indices.insert(frog.sprite.indices.end(), { 0.0f, 0.0f });
+	placeEntity("player", 1.0f, -4.4f);
 }
 
-void NewGame() {
-	glm::vec3 currPos = glm::vec3(-0.8f, 1.8f, 0.0f);
-	for (int i = 0; i < MAX_BOYS; i++) {
-		boys[i].alive = true;
-		boys[i].position = currPos;
-		currPos[0] += 0.266666f;
-		if ((i + 1) % 7 == 0) {
-			currPos[0] = -0.8f;
-			currPos[1] -= 0.25f;
-		}
-		boys[i].velocity[1] = -0.1f;
-	}
-	frog.alive = true;
-	frog.position = glm::vec3(0.0f, -1.8, 0.0f);
-}
-
-void GameOver() {
-	for (int i = 0; i < MAX_BOYS; i++) {
-		boys[i].alive = false;
-		boys[i].position = glm::vec3(-100.0f, 0.0f, 0.0f);
-	}
-	for (int i = 0; i < MAX_BEES; i++) {
-		bees[i].alive = false;
-		bees[i].position = glm::vec3(-100.0f, 0.0f, 0.0f);
-	}
-	frog.alive = false;
-	frog.position = glm::vec3(-100.0f, 0.0f, 0.0f);
-	mode = MODE_PRESS_START;
-}
-
-void DrawText(ShaderProgram &program, GLuint fontTexture, std::string text, float size, float spacing) {
+void DrawText(ShaderProgram &program, GLuint fontTexture, string text, float size, float spacing) {
 	float character_size = 1.0 / 16.0f;
-	std::vector<float> vertexData;
-	std::vector<float> texCoordData;
+	vector<float> vertexData;
+	vector<float> texCoordData;
 	for (int i = 0; i < (int)text.size(); i++) {
 		int spriteIndex = (int)text[i];
 		float texture_x = (float)(spriteIndex % 16) / 16.0f;
@@ -323,100 +467,210 @@ void DrawText(ShaderProgram &program, GLuint fontTexture, std::string text, floa
 
 }
 
-void ShootBee() {
-	if (!(bees[beeIndex].alive)) {
-		bees[beeIndex].alive = true;
-		bees[beeIndex].position = frog.position + glm::vec3(0.0f, 0.2f, 0.0f);
-		bees[beeIndex].velocity[1] = 0.5f;
-		beeIndex += 1;
-		if (beeIndex >= MAX_BEES) { beeIndex = 0; }
+void worldToTileCoordinates(float worldX, float worldY, int *gridX, int *gridY) {
+	*gridX = (int)(worldX / TILE_SIZE);
+	*gridY = (int)(worldY / -TILE_SIZE);
+}
+
+void HandleTilemapCollisionY(Entity &entity) {
+	float worldX, worldY;
+	int gridX, gridY;
+	unsigned int tileIndex;
+
+	entity.collidedTop = false;
+	entity.collidedBottom = false;
+
+	//check top
+	worldX = entity.position[0];
+	worldY = entity.position[1] + 0.5f * entity.size[1];
+	worldToTileCoordinates(worldX, worldY, &gridX, &gridY);
+	tileIndex = levelData[gridY][gridX] + 1;
+	for (int i = 0; i < NUM_SOLIDS; i++) {
+		//check if tile at top is solid
+		if (tileIndex == solid_indices[i]) {
+			//stop moving vertically
+			entity.velocity[1] = 0.0f;
+
+			//set collision flag
+			entity.collidedTop = true;
+
+			//push out of tile
+			entity.position[1] -= (worldY - ((-TILE_SIZE * gridY) - TILE_SIZE)) + 0.001f;
+			break;
+		}
+	}
+
+	//check bottom
+	worldX = entity.position[0];
+	worldY = entity.position[1] - 0.5f * entity.size[1];
+	worldToTileCoordinates(worldX, worldY, &gridX, &gridY);
+	tileIndex = levelData[gridY][gridX] + 1;
+	for (int i = 0; i < NUM_SOLIDS; i++) {
+		//check if tile at bottom is solid
+		if (tileIndex == solid_indices[i]) {
+			//stop moving vertically
+			entity.velocity[1] = 0.0f;
+
+			//set collision flag
+			entity.collidedBottom = true;
+
+			//push out of tile
+			entity.position[1] += ((-TILE_SIZE * gridY) - worldY) + 0.001f;
+			break;
+		}
+	}
+}
+
+void HandleTilemapCollisionX(Entity &entity) {
+	float worldX, worldY;
+	int gridX, gridY;
+	unsigned int tileIndex;
+
+	entity.collidedLeft = false;
+	entity.collidedRight = false;
+
+	//check left
+	worldX = entity.position[0] - 0.5f * entity.size[0];
+	worldY = entity.position[1];
+	worldToTileCoordinates(worldX, worldY, &gridX, &gridY);
+	tileIndex = levelData[gridY][gridX] + 1;
+	for (int i = 0; i < NUM_SOLIDS; i++) {
+		//check if tile at left is solid
+		if (tileIndex == solid_indices[i]) {
+			//stop moving horizontally
+			entity.velocity[0] = 0.0f;
+
+			//set collision flag
+			entity.collidedLeft = true;
+
+			//push out of tile
+			entity.position[0] += (((TILE_SIZE * gridX) + TILE_SIZE) - worldX) + 0.001f;
+			break;
+		}
+	}
+
+	//check right
+	worldX = entity.position[0] + 0.5f * entity.size[0];
+	worldY = entity.position[1];
+	worldToTileCoordinates(worldX, worldY, &gridX, &gridY);
+	tileIndex = levelData[gridY][gridX] + 1;
+	for (int i = 0; i < NUM_SOLIDS; i++) {
+		//check if tile at right is solid
+		if (tileIndex == solid_indices[i]) {
+			//stop moving horizontally
+			entity.velocity[0] = 0.0f;
+
+			//set collision flag
+			entity.collidedRight = true;
+
+			//push out of tile
+			entity.position[0] -= (worldX - (TILE_SIZE * gridX)) + 0.001f;
+			break;
+		}
 	}
 }
 
 void Update(float elapsed) {
-	switch (mode) {
-	case MODE_PRESS_START:
-		break;
-	case MODE_GAME:
-		const Uint8 *keys = SDL_GetKeyboardState(NULL);
+	const Uint8 *keys = SDL_GetKeyboardState(NULL);
 
-		//Update Frog
-		if (keys[SDL_SCANCODE_LEFT]) {
-			frog.velocity[0] = -0.5f;
-		}
-		else if (keys[SDL_SCANCODE_RIGHT]) {
-			frog.velocity[0] = 0.5f;
-		}
-		else {
-			frog.velocity[0] = 0.0f;
-		}
-		frog.Update(elapsed);
-		if (frog.position[0] >= 1.0f || frog.position[0] <= -1.0f) {
-			frog.position[0] = (frog.position[0] >= 1.0f ? 1.0f : -1.0f);
-		}
+	//Update Player
 
-		//Update Bees
-		for (int i = 0; i < MAX_BEES; i++) {
-			if (bees[i].alive) {
-				for (int j = 0; j < MAX_BOYS; j++) {
-					if (bees[i].IsColliding(boys[j])) {
-						bees[i].alive = false;
-						boys[j].alive = false;
-						//break;
-					}
-				}
-				if (bees[i].position[1] > 2.1f) { bees[i].alive = false; }
-			}
-			bees[i].Update(elapsed);
-		}
+	//every frame
+	Player.acceleration = glm::vec3(0.0f, 0.0f, 0.0f);
+	Player.Animate(elapsed);
 
-		//Update Boys
-		bool frogVictory = true;
-		for (int i = 0; i < MAX_BOYS; i++) {
-			if (boys[i].alive) {
-				frogVictory = false;
-				if (boys[i].position[1] < -1.6f) {
-					GameOver();
-					break;
-				}
-			}
-			boys[i].Update(elapsed);
+	//move left and right
+	if (!Player.collidedLeft && keys[SDL_SCANCODE_LEFT]) {
+		Player.acceleration[0] = -1.5f;
+	}
+	else if (!Player.collidedRight && keys[SDL_SCANCODE_RIGHT]) {
+		Player.acceleration[0] = 1.5f;
+	}
+
+	//jump
+	if (Player.collidedBottom && keys[SDL_SCANCODE_SPACE]) {
+		Player.velocity[1] = 2.0f;
+	}
+
+	//apply gravity if off ground
+	if (!Player.collidedBottom) {
+		Player.acceleration[1] += -2.0f;
+	}
+
+	//do work on y-axis
+	Player.UpdateY(elapsed);
+	HandleTilemapCollisionY(Player);
+
+	//do work on x-axis
+	Player.UpdateX(elapsed);
+	HandleTilemapCollisionX(Player);
+
+	//Update Coins
+	for (int i = 0; i < (int)coins.size(); i++) {
+		if (coins[i].IsColliding(Player)) {
+			coins.erase(coins.begin() + i);
 		}
-		if (frogVictory) {
-			GameOver();
+	}
+
+	for (int i = 0; i < (int)coins.size(); i++) {
+		//every frame
+		coins[i].acceleration = glm::vec3(0.0f, 0.0f, 0.0f);
+
+		//gravity
+		if (!coins[i].collidedBottom) {
+			coins[i].acceleration[1] += -0.7f;
 		}
-		break;
+		//do work on y-axis
+		coins[i].UpdateY(elapsed);
+		HandleTilemapCollisionY(coins[i]);
+
+		//x-axis
+		coins[i].UpdateX(elapsed);
+		HandleTilemapCollisionX(coins[i]);
 	}
 }
 
 void Render(ShaderProgram &program) {
-	switch (mode) {
-	case MODE_PRESS_START:
-		glm::mat4 modelMatrix = glm::mat4(1.0f);
-		modelMatrix = glm::translate(modelMatrix, glm::vec3(-0.85f, 0.0f, 0.0f));
-		program.SetModelMatrix(modelMatrix);
-		DrawText(program, fontTexture, "tBBF4: Hardcore Parkour", 0.15f, -0.075f);
-		modelMatrix = glm::translate(modelMatrix, glm::vec3(0.0f, -0.25f, 0.0f));
-		program.SetModelMatrix(modelMatrix);
-		DrawText(program, fontTexture, "Press Space to Begin", 0.15f, -0.075f);
-		break;
-	case MODE_GAME:
-		for (Entity entity : boys) {
-			if (entity.alive) { entity.Draw(program); }
-		}
-		for (Entity entity : bees) {
-			if (entity.alive) { entity.Draw(program); }
-		}
-		if (frog.alive) { frog.Draw(program); }
-		break;
+	//draw level
+	glBindTexture(GL_TEXTURE_2D, tilesTexture);
+	glm::mat4 modelMatrix = glm::mat4(1.0f);
+	program.SetModelMatrix(modelMatrix);
+
+	glVertexAttribPointer(program.positionAttribute, 2, GL_FLOAT, false, 0, level1_vertexData.data());
+	glEnableVertexAttribArray(program.positionAttribute);
+
+	glVertexAttribPointer(program.texCoordAttribute, 2, GL_FLOAT, false, 0, level1_texCoordData.data());
+	glEnableVertexAttribArray(program.texCoordAttribute);
+
+	glDrawArrays(GL_TRIANGLES, 0, level1_vertexData.size());
+	glDisableVertexAttribArray(program.positionAttribute);
+	glDisableVertexAttribArray(program.texCoordAttribute);
+
+	//draw entities
+
+	//player
+	Player.Draw(program);
+
+	//coins
+	for (int i = 0; i < (int)coins.size(); i++) {
+		coins[i].Draw(program);
 	}
-	
+}
+
+glm::vec3 getCameraPos(){
+	glm::vec3 currentPos = Player.position;
+
+	currentPos[0] = (currentPos[0] < 1.777f ? -1.777f : (currentPos[0] > 2.223f ? -2.223f : -currentPos[0]));
+
+	currentPos[1] = (currentPos[1] < -4.4f ? 4.4f : (currentPos[1] > -1.0f ? 1.0f : -currentPos[1]));
+
+	return currentPos;
 }
 
 int main(int argc, char *argv[])
 {
     SDL_Init(SDL_INIT_VIDEO);
-    displayWindow = SDL_CreateWindow("tBBF3: Hardcore Parkour", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 360, 720, SDL_WINDOW_OPENGL);
+    displayWindow = SDL_CreateWindow("tBBF4: Hardcore Parkour", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, SDL_WINDOW_OPENGL);
     SDL_GLContext context = SDL_GL_CreateContext(displayWindow);
     SDL_GL_MakeCurrent(displayWindow, context);
 
@@ -424,28 +678,24 @@ int main(int argc, char *argv[])
     glewInit();
 #endif
 
-	glViewport(0, 0, 360, 720);
+	glViewport(0, 0, 1280, 720);
 
-	projectionMatrix = glm::ortho(-1.0f, 1.0f, -2.0f, 2.0f, -1.0f, 1.0f);
+	projectionMatrix = glm::ortho(-1.777f, 1.777f, -1.0f, 1.0f, -1.0f, 1.0f);
 
 	program.Load(RESOURCE_FOLDER"vertex_textured.glsl", RESOURCE_FOLDER"fragment_textured.glsl");
 	
 	program.SetProjectionMatrix(projectionMatrix);
-	program.SetViewMatrix(viewMatrix);
 
 	glClearColor(0.05f, 0.46f, 0.73f, 1.0f);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	fontTexture = LoadTextureNearest(RESOURCE_FOLDER"font_spritesheet.png");
-	frogTexture = LoadTextureNearest(RESOURCE_FOLDER"frog.png");
-	boyTexture = LoadTextureLinear(RESOURCE_FOLDER"boy_spritesheet.png");
-	beeTexture = LoadTextureNearest(RESOURCE_FOLDER"bee.png");
+	playerTexture = LoadTextureNearest(RESOURCE_FOLDER"frog.png");
+	coinTexture = LoadTextureNearest(RESOURCE_FOLDER"coinGold.png");
+	tilesTexture = LoadTextureNearest(RESOURCE_FOLDER"tiles_spritesheet.png");
 	
-	#define FIXED_TIMESTEP 0.0069444444f
 	float acc = 0.0f;
-
-	mode = MODE_PRESS_START;
 
 	SetupGame();
 
@@ -455,19 +705,6 @@ int main(int argc, char *argv[])
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT || event.type == SDL_WINDOWEVENT_CLOSE) {
                 done = true;
-			}
-			else if (event.type == SDL_KEYDOWN) {
-				if (event.key.keysym.scancode == SDL_SCANCODE_SPACE) {
-					switch (mode) {
-					case MODE_PRESS_START:
-						mode = MODE_GAME;
-						NewGame();
-						break;
-					case MODE_GAME:
-						ShootBee();
-						break;
-					}
-				}
 			}
         }
         glClear(GL_COLOR_BUFFER_BIT);
@@ -483,10 +720,13 @@ int main(int argc, char *argv[])
 		}
 		while (elapsed >= FIXED_TIMESTEP) {
 			Update(FIXED_TIMESTEP);
-			elapsed = -FIXED_TIMESTEP;
+			elapsed -= FIXED_TIMESTEP;
 		}
 		acc = elapsed;
-		
+
+		viewMatrix = glm::mat4(1.0f);
+		viewMatrix = glm::translate(viewMatrix, getCameraPos());
+		program.SetViewMatrix(viewMatrix);
 		Render(program);
 
         SDL_GL_SwapWindow(displayWindow);
