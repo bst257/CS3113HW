@@ -47,7 +47,7 @@ class SheetSprite {
 		void Animate();
 };
 
-enum EntityType {ENTITY_PLAYER, ENTITY_COIN};
+enum EntityType {ENTITY_PLAYER, ENTITY_KEY, ENTITY_DOOR, ENTITY_POI, ENTITY_ENEMY};
 
 class Entity {
 	public:
@@ -79,6 +79,17 @@ class Entity {
 		bool collidedBottom;
 		bool collidedLeft;
 		bool collidedRight;
+
+		bool facingRight;
+		glm::vec3 squish;
+
+		//for doors
+		bool isLocked;
+
+		//for enemies
+		bool isAngry;
+		glm::vec3 resetPos;
+		
 };
 
 SheetSprite::SheetSprite() {
@@ -160,6 +171,10 @@ void Entity::Animate(float elapsed) {
 		sprite.Animate();
 		elapsedSinceLastAnim = 0.0f;
 	}
+
+	//squish
+	squish[0] = lerp(1.0f, 0.7f, abs(velocity[1] / 2.0f));
+	squish[1] = lerp(1.0f, 1.5f, abs(velocity[1] / 2.0f));
 }
 
 void Entity::UpdateX(float elapsed) {
@@ -181,10 +196,124 @@ void Entity::UpdateY(float elapsed) {
 void Entity::Draw(ShaderProgram &program) {
 	glm::mat4 modelMatrix = glm::mat4(1.0f);
 	modelMatrix = glm::translate(modelMatrix, position);
-	modelMatrix = glm::scale(modelMatrix, size);
+	modelMatrix = glm::scale(modelMatrix, glm::vec3((facingRight ? size[0] : -size[0]), size[1], size[2]));
+	if (entityType == ENTITY_PLAYER) { modelMatrix = glm::scale(modelMatrix, squish); }
 
 	program.SetModelMatrix(modelMatrix);
 	sprite.Draw(program);
+}
+
+class Particle {
+public:
+	Particle(float lifetime_in, glm::vec3 position_in);
+
+	glm::vec3 position;
+	glm::vec3 velocity;
+	float lifetime;
+};
+
+Particle::Particle(float lifetime_in, glm::vec3 position_in) {
+	position = position_in;
+	velocity = glm::vec3(0.0f);
+	lifetime = lifetime_in;
+}
+
+class ParticleEmitter {
+public:
+	ParticleEmitter(unsigned int particleCount, float maxLifetime_in,
+		glm::vec3 position_in, glm::vec3 gravity_in);
+
+	void Update(float elapsed);
+	void Render(ShaderProgram &program);
+	
+	glm::vec3 position;
+	glm::vec3 gravity;
+	glm::vec3 velocity;
+	glm::vec3 velocityDeviation;
+	float maxLifetime;
+
+	glm::vec4 startColor;
+	glm::vec4 endColor;
+	
+	std::vector<Particle> particles;
+};
+
+void ParticleEmitter::Update(float elapsed) {
+	float randPercent;
+	for (int i = 0; i < particles.size(); i++) {
+		particles[i].velocity[0] += gravity[0] * elapsed;
+		particles[i].velocity[1] += gravity[1] * elapsed;
+		particles[i].position[0] += particles[i].velocity[0] * elapsed;
+		particles[i].position[1] += particles[i].velocity[1] * elapsed;
+
+		particles[i].lifetime += elapsed;
+		if (particles[i].lifetime > maxLifetime) {
+			//reset particle
+			particles[i].velocity = velocity;
+			particles[i].position = position;
+			particles[i].lifetime -= maxLifetime;
+
+			randPercent = (float)((rand() % 201) - 100) / 100.0f;
+			particles[i].velocity[0] += randPercent * velocityDeviation[0];
+			particles[i].velocity[1] += randPercent * velocityDeviation[1];
+
+		}
+
+	}
+}
+
+ParticleEmitter::ParticleEmitter(unsigned int particleCount, float maxLifetime_in, glm::vec3 position_in, glm::vec3 gravity_in) {
+	maxLifetime = maxLifetime_in;
+	position = position_in;
+	gravity = gravity_in;
+	velocity = glm::vec3(0.0f);
+	velocityDeviation = glm::vec3(0.1f);
+	float lifetime, randPercent;
+	for (int i = 0; i < particleCount; i++) {
+		lifetime = ((float)((rand() % 100) + 1) / 100.0f) * maxLifetime;
+		particles.push_back(*new Particle(lifetime, position));
+
+		randPercent = (float)((rand() % 201) - 100) / 100.0f;
+		particles[i].velocity[0] += randPercent * velocityDeviation[0];
+		particles[i].velocity[1] += randPercent * velocityDeviation[1];
+	}
+	//startColor = glm::vec4(0.81f, 0.263f, 0.11f, 1.0f);
+	//endColor = glm::vec4(0.22f, 0.157f, 0.1333f, 0.2f);
+	startColor = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+	endColor = glm::vec4(0.0f, 0.0f, 1.0f, 0.2f);
+}
+
+void ParticleEmitter::Render(ShaderProgram &program) {
+	program.SetModelMatrix(glm::mat4(1.0f));
+	program.SetColor(1.0f, 0.0f, 0.0f, 1.0f);
+
+	glPointSize(100.0f);
+
+	vector<float> vertices;
+	for (int i = 0; i < particles.size(); i++) {
+		vertices.push_back(particles[i].position[0]);
+		vertices.push_back(particles[i].position[1]);
+	}
+
+	vector<float> particleColors;
+	for (int i = 0; i < particles.size(); i++) {
+		float relativeLifetime = (particles[i].lifetime / maxLifetime);
+		particleColors.push_back(lerp(startColor[0], endColor[0], relativeLifetime));
+		particleColors.push_back(lerp(startColor[1], endColor[1], relativeLifetime));
+		particleColors.push_back(lerp(startColor[2], endColor[2], relativeLifetime));
+		particleColors.push_back(lerp(startColor[3], endColor[3], relativeLifetime));
+	}
+
+	glVertexAttribPointer(program.positionAttribute, 2, GL_FLOAT, false, 0, vertices.data());
+	glEnableVertexAttribArray(program.positionAttribute);
+
+	//GLuint colorAttribute = glGetAttribLocation(program.programID, "color");
+	//glVertexAttribPointer(colorAttribute, 4, GL_FLOAT, false, 0, particleColors.data());
+	//glEnableVertexAttribArray(colorAttribute);
+
+	glDrawArrays(GL_POINTS, 0, particles.size());
+	glDisableVertexAttribArray(program.positionAttribute);
+	//glDisableVertexAttribArray(colorAttribute);
 }
 
 GLuint LoadTextureNearest(const char *filePath) {
@@ -231,35 +360,51 @@ GLuint LoadTextureLinear(const char *filePath) {
 
 float lastFrameTicks = 0.0f;
 
-GLuint fontTexture, coinTexture, tilesTexture, playerTexture;
+GLuint fontTexture, keyTexture, tilesTexture, playerTexture, emptyTexture, beeTexture;
 
-Mix_Chunk *pickup, *jump;
-Mix_Music *bgm;
+enum gameMode {MODE_START, MODE_OUTDOORS, MODE_STORE, MODE_EXIT, MODE_GAMEOVER, MODE_VICTORY};
+gameMode mode;
+
+Mix_Chunk *pickup, *jump, *ribbit;
+Mix_Music *bgm_outdoors, *bgm_store, *bgm_exit;
 
 #define FIXED_TIMESTEP 0.01666667f
 #define TILE_SIZE 0.2f
-#define LEVEL1_WIDTH 20
-#define LEVEL1_HEIGHT 27
 #define SPRITE_COUNT_X 14
 #define SPRITE_COUNT_Y 14
-#define NUM_SOLIDS 12
+#define NUM_SOLIDS 7
 
-vector<float> level1_vertexData;
-vector<float> level1_texCoordData;
+vector<float> level_vertexData;
+vector<float> level_texCoordData;
+vector<float> overlay_vertexData;
+vector<float> overlay_texCoordData;
+vector<float> temporary_vertexData;
+vector<float> temporary_texCoordData;
 
-vector<Entity> coins;
-Entity Player;
+Entity Player, Key, Door, PointOfInterest, Enemy;
+
+vector<ParticleEmitter> ParticleEmitters;
+
+bool showOverlay = true;
+bool showTemporary = true;
+bool showPyrotechnics = false;
+
+bool showFlavorText = false;
+string flavorText;
+bool ribbited = false;
 
 int mapWidth, mapHeight;
-unsigned int** levelData;
+unsigned int** levelData, **overlayData, **temporaryData;
 unsigned int solid_indices[NUM_SOLIDS] = {
-	148, 17, 170, 171, 157, 143, 131, 117, 103, 134, 120, 106
-};
+	114, 100, 86, 72, 120, 177, 64
+}; 
 
 glm::mat4 projectionMatrix = glm::mat4(1.0f);
 glm::mat4 viewMatrix = glm::mat4(1.0f);
 
-ShaderProgram program;
+float maxCameraX, maxCameraY, minCameraX, minCameraY;
+
+ShaderProgram program, pointProgram;
 
 //Tilemap/Level Generation
 bool readHeader(ifstream &stream) {
@@ -284,10 +429,34 @@ bool readHeader(ifstream &stream) {
 	}
 	else { // allocate our map data
 		levelData = new unsigned int*[mapHeight];
+		overlayData = new unsigned int*[mapHeight];
+		temporaryData = new unsigned int*[mapHeight];
 		for (int i = 0; i < mapHeight; ++i) {
 			levelData[i] = new unsigned int[mapWidth];
+			overlayData[i] = new unsigned int[mapWidth];
+			temporaryData[i] = new unsigned int[mapWidth];
 		}
 		return true;
+	}
+}
+
+void populateLevelArray(ifstream &stream, unsigned int** &levelArray) {
+	string line;
+	getline(stream, line);
+	for (int y = 0; y < mapHeight; y++) {
+		getline(stream, line);
+		istringstream lineStream(line);
+		string tile;
+		for (int x = 0; x < mapWidth; x++) {
+			getline(lineStream, tile, ',');
+			unsigned int val = (unsigned int)atoi(tile.c_str());
+			if (val > 0) {
+				levelArray[y][x] = val - 1;
+			}
+			else {
+				levelArray[y][x] = 0;
+			}
+		}
 	}
 }
 
@@ -299,21 +468,15 @@ bool readLayerData(ifstream &stream) {
 		string key, value;
 		getline(sStream, key, '=');
 		getline(sStream, value);
-		if (key == "data") {
-			for (int y = 0; y < mapHeight; y++) {
-				getline(stream, line);
-				istringstream lineStream(line);
-				string tile;
-				for (int x = 0; x < mapWidth; x++) {
-					getline(lineStream, tile, ',');
-					unsigned int val = (unsigned int)atoi(tile.c_str());
-					if (val > 0) {
-						levelData[y][x] = val - 1;
-					}
-					else {
-						levelData[y][x] = 0;
-					}
-				}
+		if (key == "type") {
+			if (value == "base") {
+				populateLevelArray(stream, levelData);
+			}
+			else if (value == "overlay") {
+				populateLevelArray(stream, overlayData);
+			}
+			else if (value == "temporary") {
+				populateLevelArray(stream, temporaryData);
 			}
 		}
 	}
@@ -337,19 +500,58 @@ void placeEntity(string type, float placeX, float placeY) {
 			0.0f, 0.0f, 0.5f, 0.0f, 0.5f, 0.5f, 0.5f, 0.0f
 		});
 		Player.animFPS = 4.0f;
+		Player.facingRight = true;
 	}
-	else if (type == "coin") {
-		Entity newCoin;
-		newCoin.entityType = ENTITY_COIN;
-		newCoin.position = glm::vec3(placeX + 0.5f * TILE_SIZE, placeY, 0.0f);
-		newCoin.isStatic = false;
-		newCoin.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
-		newCoin.animFPS = 1.0f;
-		newCoin.elapsedSinceLastAnim = 0.0f;
-		newCoin.sprite = SheetSprite(coinTexture, 1.0f, 1.0f, 1.0f);
-		newCoin.size = glm::vec3(0.1f, 0.1444f, 1.0f);
-		newCoin.sprite.indices.insert(newCoin.sprite.indices.end(), { 0.0f, 0.0f });
-		coins.push_back(newCoin);
+	else if (type == "key") {
+		Key.entityType = ENTITY_KEY;
+		Key.position = glm::vec3(placeX + 0.5f * TILE_SIZE, placeY, 0.0f);
+		Key.isStatic = false;
+		Key.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
+		Key.animFPS = 1.0f;
+		Key.elapsedSinceLastAnim = 0.0f;
+		Key.sprite = SheetSprite(keyTexture, 1.0f, 1.0f, 1.0f);
+		Key.size = glm::vec3(0.1714f, 0.16f, 1.0f);
+		Key.sprite.indices.insert(Key.sprite.indices.end(), { 0.0f, 0.0f });
+		Key.facingRight = true;
+	}
+	else if (type == "door") {
+		Door.entityType = ENTITY_DOOR;
+		Door.position = glm::vec3(placeX + 0.5f * TILE_SIZE, placeY, 0.0f);
+		Door.isStatic = true;
+		Door.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
+		Door.animFPS = 1.0f;
+		Door.elapsedSinceLastAnim = 0.0f;
+		Door.sprite = SheetSprite(emptyTexture, 1.0f, 1.0f, 1.0f);
+		Door.size = glm::vec3(0.2f, 0.2f, 1.0f);
+		Door.sprite.indices.insert(Door.sprite.indices.end(), { 0.0f, 0.0f });
+		Door.isLocked = true;
+		Door.facingRight = true;
+	}
+	else if (type == "POI") {
+		PointOfInterest.entityType = ENTITY_POI;
+		PointOfInterest.position = glm::vec3(placeX + 0.5f * TILE_SIZE, placeY, 0.0f);
+		PointOfInterest.isStatic = true;
+		PointOfInterest.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
+		PointOfInterest.animFPS = 1.0f;
+		PointOfInterest.elapsedSinceLastAnim = 0.0f;
+		PointOfInterest.sprite = SheetSprite(emptyTexture, 1.0f, 1.0f, 1.0f);
+		PointOfInterest.size = glm::vec3(0.3, 0.3f, 1.0f);
+		PointOfInterest.sprite.indices.insert(PointOfInterest.sprite.indices.end(), { 0.0f, 0.0f });
+		PointOfInterest.facingRight = true;
+	}
+	else if (type == "enemy") {
+		Enemy.entityType = ENTITY_ENEMY;
+		Enemy.position = glm::vec3(placeX + 0.5f * TILE_SIZE, placeY, 0.0f);
+		Enemy.isStatic = false;
+		Enemy.velocity = glm::vec3(0.0f, 0.0f, 0.0f);
+		Enemy.animFPS = 1.0f;
+		Enemy.elapsedSinceLastAnim = 0.0f;
+		Enemy.sprite = SheetSprite(beeTexture, 1.0f, 1.0f, 1.0f);
+		Enemy.size = glm::vec3(0.16, 0.137f, 1.0f);
+		Enemy.sprite.indices.insert(Enemy.sprite.indices.end(), { 0.0f, 0.0f });
+		Enemy.facingRight = true;
+		Enemy.isAngry = false;
+		Enemy.resetPos = glm::vec3(placeX + 0.5f * TILE_SIZE, placeY, 0.0f);
 	}
 }
 
@@ -380,33 +582,18 @@ bool readEntityData(ifstream &stream) {
 	return true;
 }
 
-void SetupGame() {
-	//Setup the Level/Objects
-	ifstream infile(RESOURCE_FOLDER"tilemapData.txt");
-	string line;
-	while (getline(infile, line)) {
-		if (line == "[header]") {
-			(!readHeader(infile));
-		}
-		else if (line == "[layer]") {
-			readLayerData(infile);
-		}
-		else if (line == "[coinLayer]") {
-			readEntityData(infile);
-		}
-	}
-
-	for (int y = 0; y < LEVEL1_HEIGHT; y++) {
-		for (int x = 0; x < LEVEL1_WIDTH; x++) {
-			if (levelData[y][x] != 0) {
-				float u = (float)(((int)levelData[y][x]) % SPRITE_COUNT_X) / (float)SPRITE_COUNT_X;
-				float v = (float)(((int)levelData[y][x]) / SPRITE_COUNT_X) / (float)SPRITE_COUNT_Y;
+void populateLevelVector(vector<float> &levelVertexVector, vector<float> &levelTexCoordVector, unsigned int** &levelArray) {
+	for (int y = 0; y < mapHeight; y++) {
+		for (int x = 0; x < mapWidth; x++) {
+			if (levelArray[y][x] != 0) {
+				float u = (float)(((int)levelArray[y][x]) % SPRITE_COUNT_X) / (float)SPRITE_COUNT_X;
+				float v = (float)(((int)levelArray[y][x]) / SPRITE_COUNT_X) / (float)SPRITE_COUNT_Y;
 
 				//manually putting these in b/c of annoying padding in the spritesheet
 				float spriteWidth = 0.069444444f;
 				float spriteHeight = 0.069444444f;
 
-				level1_vertexData.insert(level1_vertexData.end(), {
+				levelVertexVector.insert(levelVertexVector.end(), {
 					TILE_SIZE * x, -TILE_SIZE * y,
 					TILE_SIZE * x, (-TILE_SIZE * y) - TILE_SIZE,
 					(TILE_SIZE * x) + TILE_SIZE, (-TILE_SIZE * y) - TILE_SIZE,
@@ -414,7 +601,7 @@ void SetupGame() {
 					(TILE_SIZE * x) + TILE_SIZE, (-TILE_SIZE * y) - TILE_SIZE,
 					(TILE_SIZE * x) + TILE_SIZE, -TILE_SIZE * y
 					});
-				level1_texCoordData.insert(level1_texCoordData.end(), {
+				levelTexCoordVector.insert(levelTexCoordVector.end(), {
 					u, v,
 					u, v + (spriteHeight),
 					u + spriteWidth, v + (spriteHeight),
@@ -425,12 +612,40 @@ void SetupGame() {
 			}
 		}
 	}
+}
 
-	//Setup the player
-	placeEntity("player", 1.0f, -4.4f);
+void SetupLevel(string filename, Mix_Music* &music) {
+	//Setup the Level/Objects
+	ifstream infile(RESOURCE_FOLDER+filename);
+	string line;
+	while (getline(infile, line)) {
+		if (line == "[header]") {
+			(!readHeader(infile));
+		}
+		else if (line == "[layer]") {
+			readLayerData(infile);
+		}
+		else if (line == "[objectLayer]") {
+			readEntityData(infile);
+		}
+	}
+
+	populateLevelVector(level_vertexData, level_texCoordData, levelData);
+	populateLevelVector(overlay_vertexData, overlay_texCoordData, overlayData);
+	populateLevelVector(temporary_vertexData, temporary_texCoordData, temporaryData);
+
+	//determine Camera Extremes
+	minCameraX = 1.777f + TILE_SIZE;
+	minCameraY = 1.0f + TILE_SIZE;
+	maxCameraX = (mapWidth * TILE_SIZE) - 1.777f - TILE_SIZE;
+	maxCameraY = (mapHeight * TILE_SIZE) - 1.0f - TILE_SIZE;
 
 	//start the music
-	Mix_PlayMusic(bgm, -1);
+	Mix_PlayMusic(music, -1);
+
+	//restore bools
+	showOverlay = true;
+	showTemporary = true;
 }
 
 void DrawText(ShaderProgram &program, GLuint fontTexture, string text, float size, float spacing) {
@@ -577,109 +792,329 @@ void HandleTilemapCollisionX(Entity &entity) {
 	}
 }
 
+glm::vec3 getCameraPos() {
+	glm::vec3 currentPos = Player.position;
+
+	currentPos[0] = (currentPos[0] < minCameraX ? -minCameraX : (currentPos[0] > maxCameraX ? -maxCameraX : -currentPos[0]));
+
+	currentPos[1] = (currentPos[1] < -maxCameraY ? maxCameraY : (currentPos[1] > -minCameraY ? minCameraY : -currentPos[1]));
+
+	return currentPos;
+}
+
+void ExitLevel() {
+	for (int i = 0; i < mapHeight; i++) {
+		delete[] levelData[i];
+		delete[] overlayData[i];
+		delete[] temporaryData[i];
+	}
+	delete[] levelData;
+	delete[] overlayData;
+	delete[] temporaryData;
+
+	level_vertexData.clear();
+	level_texCoordData.clear();
+	overlay_vertexData.clear();
+	overlay_texCoordData.clear();
+	temporary_vertexData.clear();
+	temporary_texCoordData.clear();
+
+	if (!ParticleEmitters.empty()) {
+		for (int i = 0; i < ParticleEmitters.size(); i++) {
+			ParticleEmitters[i].particles.clear();
+		}
+		ParticleEmitters.clear();
+	}
+
+	Mix_HaltMusic();
+}
+
 void Update(float elapsed) {
 	const Uint8 *keys = SDL_GetKeyboardState(NULL);
 
-	//Update Player
+	switch (mode)
+	{
+	case MODE_START:
+		if (keys[SDL_SCANCODE_SPACE]) {
+			SetupLevel("FinalMap_Outdoors.txt", bgm_outdoors);
+			mode = MODE_OUTDOORS;
+			//ParticleEmitters.push_back(*new ParticleEmitter(25, 3.0f, Player.position, glm::vec3(0.0f, 0.25f, 0.0f)));
+			//showPyrotechnics = true;
+		}
+		break;
+	case MODE_GAMEOVER:
+		if (keys[SDL_SCANCODE_SPACE]) {
+			SetupLevel("FinalMap_Exit.txt", bgm_exit);
+			Door.isLocked = false;
+			mode = MODE_EXIT;
+		}
+		break;
+	case MODE_VICTORY:
+		if (keys[SDL_SCANCODE_SPACE]) {
+			SetupLevel("FinalMap_Outdoors.txt", bgm_outdoors);
+			mode = MODE_OUTDOORS;
+		}
+		break;
+	default:
+		//Update Player
 
 	//every frame
-	Player.acceleration = glm::vec3(0.0f, 0.0f, 0.0f);
-	Player.Animate(elapsed);
+		Player.acceleration = glm::vec3(0.0f, 0.0f, 0.0f);
+		Player.Animate(elapsed);
 
-	//move left and right
-	if (!Player.collidedLeft && keys[SDL_SCANCODE_LEFT]) {
-		Player.acceleration[0] = -1.5f;
-	}
-	else if (!Player.collidedRight && keys[SDL_SCANCODE_RIGHT]) {
-		Player.acceleration[0] = 1.5f;
-	}
-
-	//jump
-	if (Player.collidedBottom && keys[SDL_SCANCODE_SPACE]) {
-		Player.velocity[1] = 2.0f;
-		Mix_PlayChannel(-1, jump, 0);
-	}
-
-	//apply gravity if off ground
-	if (!Player.collidedBottom) {
-		Player.acceleration[1] += -2.0f;
-	}
-
-	//do work on y-axis
-	Player.UpdateY(elapsed);
-	HandleTilemapCollisionY(Player);
-
-	//do work on x-axis
-	Player.UpdateX(elapsed);
-	HandleTilemapCollisionX(Player);
-
-	//Update Coins
-	for (int i = 0; i < (int)coins.size(); i++) {
-		if (coins[i].IsColliding(Player)) {
-			Mix_PlayChannel(-1, pickup, 0);
-			coins.erase(coins.begin() + i);
+		//move left and right
+		if (!Player.collidedLeft && keys[SDL_SCANCODE_LEFT]) {
+			Player.acceleration[0] = -1.5f;
+			Player.facingRight = false;
 		}
-	}
-
-	for (int i = 0; i < (int)coins.size(); i++) {
-		//every frame
-		coins[i].acceleration = glm::vec3(0.0f, 0.0f, 0.0f);
-
-		//gravity
-		if (!coins[i].collidedBottom) {
-			coins[i].acceleration[1] += -0.7f;
+		else if (!Player.collidedRight && keys[SDL_SCANCODE_RIGHT]) {
+			Player.acceleration[0] = 1.5f;
+			Player.facingRight = true;
 		}
+
+		//jump
+		if (Player.collidedBottom && keys[SDL_SCANCODE_SPACE]) {
+			Player.velocity[1] = 2.0f;
+			Mix_PlayChannel(-1, jump, 0);
+		}
+
+		//apply gravity if off ground
+		if (!Player.collidedBottom) {
+			Player.acceleration[1] += -2.0f;
+		}
+
 		//do work on y-axis
-		coins[i].UpdateY(elapsed);
-		HandleTilemapCollisionY(coins[i]);
+		Player.UpdateY(elapsed);
+		HandleTilemapCollisionY(Player);
 
-		//x-axis
-		coins[i].UpdateX(elapsed);
-		HandleTilemapCollisionX(coins[i]);
+		//do work on x-axis
+		Player.UpdateX(elapsed);
+		HandleTilemapCollisionX(Player);
+
+		//Update Key 
+		if (mode == MODE_OUTDOORS) {
+			if (Key.IsColliding(Player)) {
+				Mix_PlayChannel(-1, pickup, 0);
+				Key.position[0] = -100.0f;
+				Door.isLocked = false;
+				showTemporary = false;
+				Key.isStatic = true;
+			}
+			if (!Key.isStatic) {
+				//every frame
+				Key.acceleration = glm::vec3(0.0f, 0.0f, 0.0f);
+
+				//gravity
+				if (!Key.collidedBottom) {
+					Key.acceleration[1] = -0.7f;
+				}
+				//do work on y-axis
+				Key.UpdateY(elapsed);
+				HandleTilemapCollisionY(Key);
+
+				//x-axis
+				Key.UpdateX(elapsed);
+				HandleTilemapCollisionX(Key);
+			}
+		}
+
+		//Update Point of Interest (show text if near it)
+		if (PointOfInterest.IsColliding(Player)) {
+			showFlavorText = true;
+			switch (mode) {
+			case MODE_OUTDOORS:
+				flavorText = "What a terrible sign!";
+				break;
+			case MODE_STORE:
+				flavorText = (showOverlay ? "I can't see a thing! (Press UP to light torch)" : "Woah, it's lit in here!");
+				if (keys[SDL_SCANCODE_UP]) {
+					showOverlay = false;
+					showTemporary = false;
+					showPyrotechnics = true;
+					Door.isLocked = false;
+				}
+				break;
+			case MODE_EXIT:
+				flavorText = "If I get to close to that bee's turf, he'll come after me.";
+				break;
+			default:
+				break;
+			}
+		}
+
+		//Update Door
+		if (Door.IsColliding(Player)) {
+			showFlavorText = true;
+			flavorText = (Door.isLocked ? "It's locked." : "Press UP to proceed.");
+			if (!Door.isLocked && keys[SDL_SCANCODE_UP]) {
+				switch (mode) {
+				case MODE_OUTDOORS:
+					ExitLevel();
+					glClearColor(0.6f, 0.41961f, 0.29f, 1.0f);
+					mode = MODE_STORE;
+					/*for (int i = 0; i < 4; i++) {
+						ParticleEmitters.push_back(*new ParticleEmitter(15, 3.0f, glm::vec3((float)i, -1.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)));
+					} */
+					SetupLevel("FinalMap_Store.txt", bgm_store);
+					break;
+				case MODE_STORE:
+					ExitLevel();
+					glClearColor(0.05f, 0.46f, 0.8f, 1.0f);
+					mode = MODE_EXIT;
+					SetupLevel("FinalMap_Exit.txt", bgm_exit);
+					Door.isLocked = false;
+					break;
+				case MODE_EXIT:
+					ExitLevel();
+					mode = MODE_VICTORY;
+					break;
+				}
+			}
+		}
+
+		//both
+		if (!Door.IsColliding(Player) && !PointOfInterest.IsColliding(Player)) {
+			showFlavorText = false;
+			ribbited = false;
+		}
+
+		//Update enemy 
+		if (mode == MODE_EXIT) {
+			Enemy.isAngry = (abs(Enemy.resetPos[0] - Player.position[0]) < 1.0f);
+			if (Enemy.isAngry) {
+				Enemy.velocity[0] = (Enemy.position[0] - Player.position[0] < 0.0f ? 0.25f : -0.25f);
+				Enemy.velocity[1] = (Enemy.position[1] - Player.position[1] < 0.0f ? 0.25f : -0.25f);
+			}
+			else if (abs(Enemy.resetPos[0] - Enemy.position[0]) > 0.2f || abs(Enemy.resetPos[1] - Enemy.position[1]) > 0.2f) {
+				Enemy.velocity[0] = (Enemy.position[0] - Enemy.resetPos[0] < 0.0f ? 1.0f : -1.0f);
+				Enemy.velocity[1] = (Enemy.position[1] - Enemy.resetPos[1] < 0.0f ? 1.0f : -1.0f);
+			}
+			else {
+				Enemy.velocity[0] = 0.0f;
+				Enemy.velocity[1] = 0.0f;
+			}
+			//move
+			Enemy.position[0] += Enemy.velocity[0] * elapsed;
+			Enemy.position[1] += Enemy.velocity[1] * elapsed;
+
+			//apply random jitters
+			float randPercentX = (float)((rand() % 201) - 100) / 100.0f;
+			float randPercentY = (float)((rand() % 201) - 100) / 100.0f;
+			Enemy.position[0] += 0.01 * randPercentX;
+			Enemy.position[1] += 0.01 * randPercentY;
+
+			Enemy.facingRight = Enemy.velocity[0] >= 0.0f;
+
+			if (Enemy.IsColliding(Player)) {
+				ExitLevel();
+				mode = MODE_GAMEOVER;
+				break;
+			}
+		}
+
+		if (showPyrotechnics = true) {
+			for (int i = 0; i < ParticleEmitters.size(); i++) {
+				ParticleEmitters[i].Update(elapsed);
+			}
+		}
+		break;
 	}
+
+	
+}
+
+void renderLevelVector(float* levelVertexVector, float* levelTexCoordVector, int size, ShaderProgram &program) {
+	glVertexAttribPointer(program.positionAttribute, 2, GL_FLOAT, false, 0, levelVertexVector);
+	glEnableVertexAttribArray(program.positionAttribute);
+
+	glVertexAttribPointer(program.texCoordAttribute, 2, GL_FLOAT, false, 0, levelTexCoordVector);
+	glEnableVertexAttribArray(program.texCoordAttribute);
+
+	glDrawArrays(GL_TRIANGLES, 0, size);
+	glDisableVertexAttribArray(program.positionAttribute);
+	glDisableVertexAttribArray(program.texCoordAttribute);
 }
 
 void Render(ShaderProgram &program) {
-	//draw level
-	glBindTexture(GL_TEXTURE_2D, tilesTexture);
 	glm::mat4 modelMatrix = glm::mat4(1.0f);
 	program.SetModelMatrix(modelMatrix);
+	switch (mode) {
+	case MODE_START:
+		modelMatrix = glm::translate(modelMatrix, glm::vec3(-1.6f, 0.0f, 0.0f));
+		program.SetModelMatrix(modelMatrix);
+		DrawText(program, fontTexture, "The Big Beautiful Frog in their FINAL Adventure", 0.1f, -0.05f);
+		modelMatrix = glm::translate(modelMatrix, glm::vec3(0.0f, -0.15f, 0.0f));
+		program.SetModelMatrix(modelMatrix);
+		DrawText(program, fontTexture, "Press Space to Begin", 0.1f, -0.05f);
+		break;
+	case MODE_GAMEOVER:
+		modelMatrix = glm::translate(modelMatrix, glm::vec3(-0.45f, 0.0f, 0.0f));
+		program.SetModelMatrix(modelMatrix);
+		DrawText(program, fontTexture, "GAME OVER", 0.1f, 0.0f);
+		modelMatrix = glm::translate(modelMatrix, glm::vec3(-0.5f, -0.15f, 0.0f));
+		program.SetModelMatrix(modelMatrix);
+		DrawText(program, fontTexture, "Press Space to Retry or ESC to Exit", 0.1f, -0.05f);
+		break;
+	case MODE_VICTORY:
+		modelMatrix = glm::translate(modelMatrix, glm::vec3(-0.5f, 0.0f, 0.0f));
+		program.SetModelMatrix(modelMatrix);
+		DrawText(program, fontTexture, "Congratulations!", 0.1f, -0.05f);
+		modelMatrix = glm::translate(modelMatrix, glm::vec3(-0.5f, -0.15f, 0.0f));
+		program.SetModelMatrix(modelMatrix);
+		DrawText(program, fontTexture, "Press Space to Play Again or ESC to Exit", 0.1f, -0.05f);
+		break;
+	default:
+		//draw level
+		glBindTexture(GL_TEXTURE_2D, tilesTexture);
 
-	glVertexAttribPointer(program.positionAttribute, 2, GL_FLOAT, false, 0, level1_vertexData.data());
-	glEnableVertexAttribArray(program.positionAttribute);
+		renderLevelVector(level_vertexData.data(), level_texCoordData.data(), level_vertexData.size(), program);
+		if (showOverlay) { renderLevelVector(overlay_vertexData.data(), overlay_texCoordData.data(), overlay_vertexData.size(), program); }
+		if (showTemporary) { renderLevelVector(temporary_vertexData.data(), temporary_texCoordData.data(), temporary_vertexData.size(), program); }
 
-	glVertexAttribPointer(program.texCoordAttribute, 2, GL_FLOAT, false, 0, level1_texCoordData.data());
-	glEnableVertexAttribArray(program.texCoordAttribute);
+		//draw visible entities
 
-	glDrawArrays(GL_TRIANGLES, 0, level1_vertexData.size());
-	glDisableVertexAttribArray(program.positionAttribute);
-	glDisableVertexAttribArray(program.texCoordAttribute);
+		//player
+		Player.Draw(program);
 
-	//draw entities
+		//Draw Key if we havent moved it offscreen
+		if (mode == MODE_OUTDOORS && Key.position[0] > 0) {
+			Key.Draw(program);
+		}
 
-	//player
-	Player.Draw(program);
+		//Draw bee if were in the last stage
+		if (mode == MODE_EXIT) {
+			Enemy.Draw(program);
+		}
 
-	//coins
-	for (int i = 0; i < (int)coins.size(); i++) {
-		coins[i].Draw(program);
+		//Draw Level's Flavor text
+		if (showFlavorText) {
+			modelMatrix = glm::mat4(1.0f);
+			glm::vec3 textPos = getCameraPos();
+			textPos[0] = -textPos[0] - 1.6f;
+			textPos[1] = -textPos[1] - 0.9f;
+			modelMatrix = glm::translate(modelMatrix, textPos);
+			program.SetModelMatrix(modelMatrix);
+			DrawText(program, fontTexture, flavorText, 0.1f, -0.05f);
+			if (!ribbited) { Mix_PlayChannel(-1, ribbit, 0); }
+			ribbited = true;
+		}
+
+		//Fiyah
+		if (showPyrotechnics) {
+			glUseProgram(pointProgram.programID);
+			for (int i = 0; i < ParticleEmitters.size(); i++) {
+				ParticleEmitters[i].Render(pointProgram);
+			}
+			glUseProgram(program.programID);
+		}
+		break;
 	}
-}
-
-glm::vec3 getCameraPos(){
-	glm::vec3 currentPos = Player.position;
-
-	currentPos[0] = (currentPos[0] < 1.777f ? -1.777f : (currentPos[0] > 2.223f ? -2.223f : -currentPos[0]));
-
-	currentPos[1] = (currentPos[1] < -4.4f ? 4.4f : (currentPos[1] > -1.0f ? 1.0f : -currentPos[1]));
-
-	return currentPos;
 }
 
 int main(int argc, char *argv[])
 {
     SDL_Init(SDL_INIT_VIDEO);
-    displayWindow = SDL_CreateWindow("tBBF5: but This is the Remix", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, SDL_WINDOW_OPENGL);
+    displayWindow = SDL_CreateWindow("tBBF6: The Final Adventure", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, SDL_WINDOW_OPENGL);
     SDL_GLContext context = SDL_GL_CreateContext(displayWindow);
     SDL_GL_MakeCurrent(displayWindow, context);
 
@@ -692,27 +1127,38 @@ int main(int argc, char *argv[])
 	projectionMatrix = glm::ortho(-1.777f, 1.777f, -1.0f, 1.0f, -1.0f, 1.0f);
 
 	program.Load(RESOURCE_FOLDER"vertex_textured.glsl", RESOURCE_FOLDER"fragment_textured.glsl");
+	pointProgram.Load(RESOURCE_FOLDER"vertex.glsl", RESOURCE_FOLDER"fragment.glsl");
 	
 	program.SetProjectionMatrix(projectionMatrix);
+	pointProgram.SetProjectionMatrix(projectionMatrix);
+	pointProgram.SetModelMatrix(glm::mat4(1.0f));
 
-	glClearColor(0.05f, 0.46f, 0.73f, 1.0f);
+	glClearColor(0.05f, 0.46f, 0.8f, 1.0f);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 4096);
 
 	fontTexture = LoadTextureNearest(RESOURCE_FOLDER"font_spritesheet.png");
+	beeTexture = LoadTextureNearest(RESOURCE_FOLDER"bee.png");
 	playerTexture = LoadTextureNearest(RESOURCE_FOLDER"frog.png");
-	coinTexture = LoadTextureNearest(RESOURCE_FOLDER"coinGold.png");
-	tilesTexture = LoadTextureNearest(RESOURCE_FOLDER"tiles_spritesheet.png");
+	keyTexture = LoadTextureNearest(RESOURCE_FOLDER"keyYellow.png");
+	tilesTexture = LoadTextureNearest(RESOURCE_FOLDER"tiles_spritesheet_plus2.png");
 
 	pickup = Mix_LoadWAV(RESOURCE_FOLDER"coinPickup.wav");
 	jump = Mix_LoadWAV(RESOURCE_FOLDER"jump.wav");
-	bgm = Mix_LoadMUS(RESOURCE_FOLDER"bgm.mp3");
+	ribbit = Mix_LoadWAV(RESOURCE_FOLDER"ribbit.wav");
+	bgm_outdoors = Mix_LoadMUS(RESOURCE_FOLDER"bgm.mp3");
+	bgm_store = Mix_LoadMUS(RESOURCE_FOLDER"bgm_store.mp3");
+	bgm_exit = Mix_LoadMUS(RESOURCE_FOLDER"bgm_exit.mp3");
 	
+	Mix_VolumeMusic(15);
+
 	float acc = 0.0f;
 
-	SetupGame();
+	mode = MODE_START;
+
+	srand(time(NULL));
 
     SDL_Event event;
     bool done = false;
@@ -720,6 +1166,11 @@ int main(int argc, char *argv[])
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT || event.type == SDL_WINDOWEVENT_CLOSE) {
                 done = true;
+			}
+			else if (event.type == SDL_KEYDOWN) {
+				if (event.key.keysym.scancode == SDL_SCANCODE_ESCAPE) {
+					done = true;
+				}
 			}
         }
         glClear(GL_COLOR_BUFFER_BIT);
@@ -740,8 +1191,11 @@ int main(int argc, char *argv[])
 		acc = elapsed;
 
 		viewMatrix = glm::mat4(1.0f);
-		viewMatrix = glm::translate(viewMatrix, getCameraPos());
+		if (mode == MODE_OUTDOORS || mode == MODE_STORE || mode == MODE_EXIT) {
+			viewMatrix = glm::translate(viewMatrix, getCameraPos());
+		}
 		program.SetViewMatrix(viewMatrix);
+		pointProgram.SetViewMatrix(viewMatrix);
 		Render(program);
 
         SDL_GL_SwapWindow(displayWindow);
@@ -749,7 +1203,10 @@ int main(int argc, char *argv[])
 
 	Mix_FreeChunk(jump);
 	Mix_FreeChunk(pickup);
-	Mix_FreeMusic(bgm);
+	Mix_FreeChunk(ribbit);
+	Mix_FreeMusic(bgm_outdoors);
+	Mix_FreeMusic(bgm_store);
+	Mix_FreeMusic(bgm_exit);
     
     SDL_Quit();
     return 0;

@@ -1,2 +1,20 @@
 ﻿  main.cpp
-  NYUCodebase.vcxproj -> E:\NYU Stuff\CS 3113\CS3113HW\HW5\Debug\NYUCodebase.exe
+e:\nyu stuff\cs 3113\cs3113hw\final\nyucodebase\main.cpp(243): warning C4018: '<': signed/unsigned mismatch
+e:\nyu stuff\cs 3113\cs3113hw\final\nyucodebase\main.cpp(272): warning C4018: '<': signed/unsigned mismatch
+e:\nyu stuff\cs 3113\cs3113hw\final\nyucodebase\main.cpp(293): warning C4018: '<': signed/unsigned mismatch
+e:\nyu stuff\cs 3113\cs3113hw\final\nyucodebase\main.cpp(299): warning C4018: '<': signed/unsigned mismatch
+e:\nyu stuff\cs 3113\cs3113hw\final\nyucodebase\main.cpp(823): warning C4018: '<': signed/unsigned mismatch
+e:\nyu stuff\cs 3113\cs3113hw\final\nyucodebase\main.cpp(1003): warning C4244: '+=': conversion from 'double' to 'T', possible loss of data
+          with
+          [
+              T=float
+          ]
+e:\nyu stuff\cs 3113\cs3113hw\final\nyucodebase\main.cpp(1004): warning C4244: '+=': conversion from 'double' to 'T', possible loss of data
+          with
+          [
+              T=float
+          ]
+e:\nyu stuff\cs 3113\cs3113hw\final\nyucodebase\main.cpp(1016): warning C4018: '<': signed/unsigned mismatch
+e:\nyu stuff\cs 3113\cs3113hw\final\nyucodebase\main.cpp(1105): warning C4018: '<': signed/unsigned mismatch
+e:\nyu stuff\cs 3113\cs3113hw\final\nyucodebase\main.cpp(1161): warning C4244: 'argument': conversion from 'time_t' to 'unsigned int', possible loss of data
+  NYUCodebase.vcxproj -> E:\NYU Stuff\CS 3113\CS3113HW\Final\Debug\NYUCodebase.exe
